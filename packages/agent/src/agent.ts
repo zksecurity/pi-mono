@@ -8,6 +8,7 @@ import {
 	type ImageContent,
 	type Message,
 	type Model,
+	type NativeToolsOptions,
 	type SimpleStreamOptions,
 	streamSimple,
 	type TextContent,
@@ -111,6 +112,11 @@ export interface AgentOptions {
 
 	/** Called after a tool finishes executing, before final tool events are emitted. */
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
+
+	/**
+	 * Provider-native built-in tools (for example hosted web search).
+	 */
+	nativeTools?: NativeToolsOptions;
 }
 
 export class Agent {
@@ -152,6 +158,7 @@ export class Agent {
 		context: AfterToolCallContext,
 		signal?: AbortSignal,
 	) => Promise<AfterToolCallResult | undefined>;
+	private _nativeTools?: NativeToolsOptions;
 
 	constructor(opts: AgentOptions = {}) {
 		this._state = { ...this._state, ...opts.initialState };
@@ -169,6 +176,7 @@ export class Agent {
 		this._toolExecution = opts.toolExecution ?? "parallel";
 		this._beforeToolCall = opts.beforeToolCall;
 		this._afterToolCall = opts.afterToolCall;
+		this._nativeTools = opts.nativeTools;
 	}
 
 	/**
@@ -539,6 +547,7 @@ export class Agent {
 			toolExecution: this._toolExecution,
 			beforeToolCall: this._beforeToolCall,
 			afterToolCall: this._afterToolCall,
+			nativeTools: this._nativeTools,
 			convertToLlm: this.convertToLlm,
 			transformContext: this.transformContext,
 			getApiKey: this.getApiKey,
