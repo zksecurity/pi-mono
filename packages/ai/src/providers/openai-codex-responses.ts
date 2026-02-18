@@ -290,6 +290,11 @@ function buildRequestBody(
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,
 	});
+	const include = new Set<string>(["reasoning.encrypted_content"]);
+	if (options?.nativeTools?.webSearch) {
+		include.add("web_search_call.action.sources");
+		include.add("web_search_call.results");
+	}
 
 	const body: RequestBody = {
 		model: model.id,
@@ -298,7 +303,7 @@ function buildRequestBody(
 		instructions: context.systemPrompt,
 		input: messages,
 		text: { verbosity: options?.textVerbosity || "medium" },
-		include: ["reasoning.encrypted_content"],
+		include: [...include],
 		prompt_cache_key: options?.sessionId,
 		tool_choice: "auto",
 		parallel_tool_calls: true,
@@ -308,8 +313,12 @@ function buildRequestBody(
 		body.temperature = options.temperature;
 	}
 
-	if (context.tools) {
-		body.tools = convertResponsesTools(context.tools, { strict: null });
+	const convertedTools = convertResponsesTools(context.tools, {
+		strict: null,
+		nativeWebSearch: options?.nativeTools?.webSearch,
+	});
+	if (convertedTools.length > 0) {
+		body.tools = convertedTools;
 	}
 
 	if (options?.reasoningEffort !== undefined) {
