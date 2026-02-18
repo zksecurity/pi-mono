@@ -499,6 +499,11 @@ export async function processResponsesStream<TApi extends Api>(
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 				};
 			}
+			const wsCount = response?.output?.filter((item: any) => item.type === "web_search_call").length ?? 0;
+			if (wsCount > 0) {
+				output.usage.extras = { webSearch: wsCount };
+				output.usage.cost.extras = { webSearch: wsCount * 0.01 };
+			}
 			calculateCost(model, output.usage);
 			if (options?.applyServiceTierPricing) {
 				const serviceTier = response?.service_tier ?? options.serviceTier;
