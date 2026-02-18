@@ -255,6 +255,11 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
+					const wsCount = (event.message.usage as any).server_tool_use?.web_search_requests ?? 0;
+					if (wsCount > 0) {
+						output.usage.extras = { webSearch: wsCount };
+						output.usage.cost.extras = { webSearch: wsCount * 0.01 };
+					}
 					calculateCost(model, output.usage);
 				} else if (event.type === "content_block_start") {
 					if (event.content_block.type === "text") {
@@ -385,6 +390,11 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
+					const wsCount = (event.usage as any).server_tool_use?.web_search_requests ?? 0;
+					if (wsCount > 0) {
+						output.usage.extras = { webSearch: wsCount };
+						output.usage.cost.extras = { webSearch: wsCount * 0.01 };
+					}
 					calculateCost(model, output.usage);
 				}
 			}

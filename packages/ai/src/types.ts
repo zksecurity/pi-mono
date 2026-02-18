@@ -175,12 +175,14 @@ export interface Usage {
 	cacheRead: number;
 	cacheWrite: number;
 	totalTokens: number;
+	extras?: Record<string, number>;
 	cost: {
 		input: number;
 		output: number;
 		cacheRead: number;
 		cacheWrite: number;
 		total: number;
+		extras?: Record<string, number>;
 	};
 }
 
