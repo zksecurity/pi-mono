@@ -64,7 +64,7 @@ export interface Settings {
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-	transport?: TransportSetting; // default: "sse"
+	transport?: TransportSetting; // default: "auto" (WebSocket with SSE fallback)
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
 	theme?: string;
@@ -569,7 +569,7 @@ export class SettingsManager {
 	}
 
 	getTransport(): TransportSetting {
-		return this.settings.transport ?? "sse";
+		return this.settings.transport ?? "auto";
 	}
 
 	setTransport(transport: TransportSetting): void {
