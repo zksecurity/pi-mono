@@ -167,7 +167,7 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 				apiKey,
 				websocketRequestId,
 			);
-			const transport = options?.transport || "sse";
+			const transport = options?.transport || "auto";
 
 			let startPushed = false;
 
