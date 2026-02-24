@@ -110,6 +110,7 @@ async function runLoop(
 	streamFn?: StreamFn,
 ): Promise<void> {
 	let firstTurn = true;
+	let previousResponseId: string | undefined;
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 
@@ -137,9 +138,19 @@ async function runLoop(
 				pendingMessages = [];
 			}
 
-			// Stream assistant response
-			const message = await streamAssistantResponse(currentContext, config, signal, stream, streamFn);
+			// Stream assistant response (pass previousResponseId for incremental continuation)
+			const message = await streamAssistantResponse(
+				currentContext,
+				previousResponseId ? { ...config, previousResponseId } : config,
+				signal,
+				stream,
+				streamFn,
+			);
 			newMessages.push(message);
+
+			// Track response ID for next turn; clear on error so we don't use stale IDs
+			previousResponseId =
+				message.stopReason === "error" || message.stopReason === "aborted" ? undefined : message.responseId;
 
 			if (message.stopReason === "error" || message.stopReason === "aborted") {
 				stream.push({ type: "turn_end", message, toolResults: [] });

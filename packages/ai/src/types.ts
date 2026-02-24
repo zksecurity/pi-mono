@@ -86,6 +86,12 @@ export interface StreamOptions {
 	 */
 	transport?: Transport;
 	/**
+	 * Response ID from the previous turn for incremental continuation.
+	 * When set, providers that support it send only new messages instead of full context.
+	 * Ignored by providers that don't support continuation.
+	 */
+	previousResponseId?: string;
+	/**
 	 * Prompt cache retention preference. Providers map this to their supported values.
 	 * Default: "short".
 	 */
@@ -204,6 +210,8 @@ export interface AssistantMessage {
 	stopReason: StopReason;
 	errorMessage?: string;
 	timestamp: number; // Unix timestamp in milliseconds
+	/** Provider-specific response ID for continuation (e.g., OpenAI previous_response_id). */
+	responseId?: string;
 }
 
 export interface ToolResultMessage<TDetails = any> {
