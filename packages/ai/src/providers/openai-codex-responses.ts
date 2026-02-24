@@ -148,7 +148,7 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 			let body = buildRequestBody(model, context, options);
 			options?.onPayload?.(body);
 			const headers = buildHeaders(model.headers, options?.headers, accountId, apiKey, options?.sessionId);
-			const transport = options?.transport || "sse";
+			const transport = options?.transport || "auto";
 
 			let startPushed = false;
 
