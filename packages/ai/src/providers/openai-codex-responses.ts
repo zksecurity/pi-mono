@@ -13,6 +13,7 @@ import type {
 	Api,
 	AssistantMessage,
 	Context,
+	Message,
 	Model,
 	SimpleStreamOptions,
 	StreamFunction,
@@ -73,6 +74,13 @@ interface RequestBody {
 	include?: string[];
 	prompt_cache_key?: string;
 	[key: string]: unknown;
+}
+
+class PreviousResponseNotFoundError extends Error {
+	constructor() {
+		super("Previous response not found");
+		this.name = "PreviousResponseNotFoundError";
+	}
 }
 
 // ============================================================================
@@ -137,44 +145,71 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 			}
 
 			const accountId = extractAccountId(apiKey);
-			const body = buildRequestBody(model, context, options);
+			let body = buildRequestBody(model, context, options);
 			options?.onPayload?.(body);
 			const headers = buildHeaders(model.headers, options?.headers, accountId, apiKey, options?.sessionId);
-			const bodyJson = JSON.stringify(body);
 			const transport = options?.transport || "sse";
+
+			let startPushed = false;
 
 			if (transport !== "sse") {
 				let websocketStarted = false;
-				try {
-					await processWebSocketStream(
-						resolveCodexWebSocketUrl(model.baseUrl),
-						body,
-						headers,
-						output,
-						stream,
-						model,
-						() => {
-							websocketStarted = true;
-						},
-						options,
-					);
+				let wsRetried = false;
+				let wsDone = false;
+				stream.push({ type: "start", partial: output });
+				startPushed = true;
+				while (!wsDone) {
+					try {
+						await processWebSocketStream(
+							resolveCodexWebSocketUrl(model.baseUrl),
+							body,
+							headers,
+							output,
+							stream,
+							model,
+							() => {
+								websocketStarted = true;
+							},
+							options,
+						);
 
-					if (options?.signal?.aborted) {
-						throw new Error("Request was aborted");
-					}
-					stream.push({
-						type: "done",
-						reason: output.stopReason as "stop" | "length" | "toolUse",
-						message: output,
-					});
-					stream.end();
-					return;
-				} catch (error) {
-					if (transport === "websocket" || websocketStarted) {
-						throw error;
+						if (options?.signal?.aborted) {
+							throw new Error("Request was aborted");
+						}
+						stream.push({
+							type: "done",
+							reason: output.stopReason as "stop" | "length" | "toolUse",
+							message: output,
+						});
+						stream.end();
+						return;
+					} catch (error) {
+						// If the server doesn't have the previous response cached, retry with full context (once)
+						if (error instanceof PreviousResponseNotFoundError && !wsRetried) {
+							wsRetried = true;
+							body = buildRequestBody(model, context, {
+								...options,
+								previousResponseId: undefined,
+							});
+							output.content = [];
+							output.stopReason = "stop";
+							output.errorMessage = undefined;
+							websocketStarted = false;
+							continue;
+						}
+						if (transport === "websocket" || websocketStarted) {
+							throw error;
+						}
+						wsDone = true;
 					}
 				}
 			}
+
+			// SSE fallback: never send previous_response_id (only works with WebSocket in-memory cache)
+			if (body.previous_response_id) {
+				body = buildRequestBody(model, context, { ...options, previousResponseId: undefined });
+			}
+			const bodyJson = JSON.stringify(body);
 
 			// Fetch with retry logic for rate limits and transient errors
 			let response: Response | undefined;
@@ -236,7 +271,7 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 				throw new Error("No response body");
 			}
 
-			stream.push({ type: "start", partial: output });
+			if (!startPushed) stream.push({ type: "start", partial: output });
 			await processStream(response, output, stream, model, options?.signal);
 
 			if (options?.signal?.aborted) {
@@ -284,13 +319,26 @@ function buildRequestBody(
 	context: Context,
 	options?: OpenAICodexResponsesOptions,
 ): RequestBody {
-	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
-		includeSystemPrompt: false,
-	});
 	const include = new Set<string>(["reasoning.encrypted_content"]);
 	if (options?.nativeTools?.webSearch) {
 		include.add("web_search_call.action.sources");
 		include.add("web_search_call.results");
+	}
+
+	// When continuing from a previous response, send only new messages (tool results + user messages
+	// after the last assistant turn). The server already has everything before that.
+	let messages: ReturnType<typeof convertResponsesMessages>;
+	if (options?.previousResponseId) {
+		messages = convertResponsesMessages(
+			model,
+			{ ...context, messages: getIncrementalMessages(context.messages) },
+			CODEX_TOOL_CALL_PROVIDERS,
+			{ includeSystemPrompt: false },
+		);
+	} else {
+		messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
+			includeSystemPrompt: false,
+		});
 	}
 
 	const body: RequestBody = {
@@ -305,6 +353,10 @@ function buildRequestBody(
 		tool_choice: "auto",
 		parallel_tool_calls: true,
 	};
+
+	if (options?.previousResponseId) {
+		body.previous_response_id = options.previousResponseId;
+	}
 
 	if (options?.temperature !== undefined) {
 		body.temperature = options.temperature;
@@ -326,6 +378,16 @@ function buildRequestBody(
 	}
 
 	return body;
+}
+
+/** Extract messages after the last assistant message (tool results + new user messages). */
+function getIncrementalMessages(messages: Message[]): Message[] {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (messages[i].role === "assistant") {
+			return messages.slice(i + 1);
+		}
+	}
+	return messages;
 }
 
 function clampReasoningEffort(modelId: string, effort: string): string {
@@ -383,8 +445,12 @@ async function* mapCodexEvents(events: AsyncIterable<Record<string, unknown>>): 
 		if (!type) continue;
 
 		if (type === "error") {
-			const code = (event as { code?: string }).code || "";
-			const message = (event as { message?: string }).message || "";
+			const code = (event as { code?: string }).code || (event as { error?: { code?: string } }).error?.code || "";
+			const message =
+				(event as { message?: string }).message || (event as { error?: { message?: string } }).error?.message || "";
+			if (code === "previous_response_not_found") {
+				throw new PreviousResponseNotFoundError();
+			}
 			throw new Error(`Codex error: ${message || code || JSON.stringify(event)}`);
 		}
 
@@ -836,7 +902,6 @@ async function processWebSocketStream(
 	try {
 		socket.send(JSON.stringify({ type: "response.create", ...body }));
 		onStart();
-		stream.push({ type: "start", partial: output });
 		await processResponsesStream(mapCodexEvents(parseWebSocket(socket, options?.signal)), output, stream, model);
 		if (options?.signal?.aborted) {
 			keepConnection = false;
