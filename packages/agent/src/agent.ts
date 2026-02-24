@@ -148,7 +148,7 @@ export class Agent {
 		this.getApiKey = opts.getApiKey;
 		this._onPayload = opts.onPayload;
 		this._thinkingBudgets = opts.thinkingBudgets;
-		this._transport = opts.transport ?? "sse";
+		this._transport = opts.transport ?? "auto";
 		this._maxRetryDelayMs = opts.maxRetryDelayMs;
 		this._nativeTools = opts.nativeTools;
 	}
