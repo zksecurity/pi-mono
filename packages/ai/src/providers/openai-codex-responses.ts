@@ -208,7 +208,10 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 							websocketStarted = false;
 							continue;
 						}
-						if (transport === "websocket" || websocketStarted) {
+						// Allow SSE fallback when the server closed the WebSocket before
+						// streaming any response data (e.g. 1011 Internal Error).
+						const receivedData = output.content.length > 0;
+						if (transport === "websocket" || (websocketStarted && receivedData)) {
 							throw error;
 						}
 						wsDone = true;
