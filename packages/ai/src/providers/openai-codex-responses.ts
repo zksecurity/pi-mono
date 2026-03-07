@@ -164,7 +164,6 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 			let startPushed = false;
 
 			if (transport !== "sse") {
-				let websocketStarted = false;
 				let wsRetried = false;
 				let wsDone = false;
 				stream.push({ type: "start", partial: output });
@@ -178,9 +177,7 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 							output,
 							stream,
 							model,
-							() => {
-								websocketStarted = true;
-							},
+							() => {},
 							options,
 						);
 
@@ -205,15 +202,16 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 							output.content = [];
 							output.stopReason = "stop";
 							output.errorMessage = undefined;
-							websocketStarted = false;
 							continue;
 						}
-						// Allow SSE fallback when the server closed the WebSocket before
-						// streaming any response data (e.g. 1011 Internal Error).
-						const receivedData = output.content.length > 0;
-						if (transport === "websocket" || (websocketStarted && receivedData)) {
+						// In explicit "websocket" mode, propagate the error.
+						// In "auto" mode, always fall back to SSE (reset any partial data).
+						if (transport === "websocket") {
 							throw error;
 						}
+						output.content = [];
+						output.stopReason = "stop";
+						output.errorMessage = undefined;
 						wsDone = true;
 					}
 				}
