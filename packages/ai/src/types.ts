@@ -231,8 +231,6 @@ export interface AssistantMessage {
 	stopReason: StopReason;
 	errorMessage?: string;
 	timestamp: number; // Unix timestamp in milliseconds
-	/** Provider-specific response ID for continuation (e.g., OpenAI previous_response_id). */
-	responseId?: string;
 }
 
 export interface ToolResultMessage<TDetails = any> {
