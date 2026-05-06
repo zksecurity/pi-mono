@@ -37,8 +37,8 @@ jobs:
 
       - name: Pack tarballs
         run: |
-          for pkg in tui ai agent coding-agent mom web-ui pods; do
-            (cd "packages/$pkg" && npm pack)
+          for pkg in packages/*/package.json; do
+            (cd "$(dirname "$pkg")" && npm pack)
           done
 
       - name: Create GitHub Release
