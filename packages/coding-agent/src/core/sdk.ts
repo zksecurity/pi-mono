@@ -1,6 +1,12 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@mariozechner/pi-agent-core";
-import { clampThinkingLevel, type Message, type Model, streamSimple } from "@mariozechner/pi-ai";
+import {
+	clampThinkingLevel,
+	type Message,
+	type Model,
+	type NativeToolsOptions,
+	streamSimple,
+} from "@mariozechner/pi-ai";
 import { getAgentDir } from "../config.js";
 import { AgentSession } from "./agent-session.js";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.js";
@@ -64,6 +70,9 @@ export interface CreateAgentSessionOptions {
 	 * When provided, only the listed tool names are enabled.
 	 */
 	tools?: string[];
+
+	/** Provider-native built-in tools (for example hosted web search). */
+	nativeTools?: NativeToolsOptions;
 	/** Custom tools to register (in addition to built-in tools). */
 	customTools?: ToolDefinition[];
 
@@ -373,6 +382,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		transport: settingsManager.getTransport(),
 		thinkingBudgets: settingsManager.getThinkingBudgets(),
 		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
+		nativeTools: options.nativeTools,
 	});
 
 	// Restore messages if session has existing data
