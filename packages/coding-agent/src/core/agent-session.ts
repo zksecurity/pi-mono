@@ -14,7 +14,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname } from "node:path";
 import type {
 	Agent,
 	AgentEvent,
@@ -33,11 +33,12 @@ import {
 	resetApiProviders,
 	streamSimple,
 } from "@earendil-works/pi-ai";
-import { theme } from "../modes/interactive/theme/theme.js";
-import { stripFrontmatter } from "../utils/frontmatter.js";
-import { sleep } from "../utils/sleep.js";
-import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.js";
-import { type BashResult, executeBashWithOperations } from "./bash-executor.js";
+import { theme } from "../modes/interactive/theme/theme.ts";
+import { stripFrontmatter } from "../utils/frontmatter.ts";
+import { resolvePath } from "../utils/paths.ts";
+import { sleep } from "../utils/sleep.ts";
+import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
+import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
 	type CompactionResult,
 	calculateContextTokens,
@@ -47,10 +48,10 @@ import {
 	generateBranchSummary,
 	prepareCompaction,
 	shouldCompact,
-} from "./compaction/index.js";
-import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
-import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.js";
-import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
+} from "./compaction/index.ts";
+import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
+import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
+import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
 	type ContextUsage,
 	type ExtensionCommandContextActions,
@@ -75,21 +76,21 @@ import {
 	type TurnEndEvent,
 	type TurnStartEvent,
 	wrapRegisteredTools,
-} from "./extensions/index.js";
-import { emitSessionShutdownEvent } from "./extensions/runner.js";
-import type { BashExecutionMessage, CustomMessage } from "./messages.js";
-import type { ModelRegistry } from "./model-registry.js";
-import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
-import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.js";
-import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.js";
-import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.js";
-import type { SettingsManager } from "./settings-manager.js";
-import type { SlashCommandInfo } from "./slash-commands.js";
-import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
-import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.js";
-import { type BashOperations, createLocalBashOperations } from "./tools/bash.js";
-import { createAllToolDefinitions } from "./tools/index.js";
-import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.js";
+} from "./extensions/index.ts";
+import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
+import type { ModelRegistry } from "./model-registry.ts";
+import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
+import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
+import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
+import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.ts";
+import type { SettingsManager } from "./settings-manager.ts";
+import type { SlashCommandInfo } from "./slash-commands.ts";
+import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
+import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
+import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
+import { createAllToolDefinitions } from "./tools/index.ts";
+import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 
 // ============================================================================
 // Skill Block Parsing
@@ -120,7 +121,12 @@ export function parseSkillBlock(text: string): ParsedSkillBlock | null {
 
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
-	| AgentEvent
+	| Exclude<AgentEvent, { type: "agent_end" }>
+	| {
+			type: "agent_end";
+			messages: AgentMessage[];
+			willRetry: boolean;
+	  }
 	| {
 			type: "queue_update";
 			steering: readonly string[];
@@ -180,6 +186,7 @@ export interface AgentSessionConfig {
 export interface ExtensionBindings {
 	uiContext?: ExtensionUIContext;
 	commandContextActions?: ExtensionCommandContextActions;
+	abortHandler?: () => void;
 	shutdownHandler?: ShutdownHandler;
 	onError?: ExtensionErrorListener;
 }
@@ -291,6 +298,7 @@ export class AgentSession {
 	private _sessionStartEvent: SessionStartEvent;
 	private _extensionUIContext?: ExtensionUIContext;
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
+	private _extensionAbortHandler?: () => void;
 	private _extensionShutdownHandler?: ShutdownHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _extensionErrorUnsubscriber?: () => void;
@@ -485,7 +493,7 @@ export class AgentSession {
 		await this._emitExtensionEvent(event);
 
 		// Notify all listeners
-		this._emit(event);
+		this._emit(event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event);
 
 		// Handle session persistence
 		if (event.type === "message_end") {
@@ -530,6 +538,21 @@ export class AgentSession {
 			}
 		}
 	};
+
+	private _willRetryAfterAgentEnd(event: Extract<AgentEvent, { type: "agent_end" }>): boolean {
+		const settings = this.settingsManager.getRetrySettings();
+		if (!settings.enabled || this._retryAttempt >= settings.maxRetries) {
+			return false;
+		}
+
+		for (let i = event.messages.length - 1; i >= 0; i--) {
+			const message = event.messages[i];
+			if (message.role === "assistant") {
+				return this._isRetryableError(message as AssistantMessage);
+			}
+		}
+		return false;
+	}
 
 	/** Extract text content from a message */
 	private _getUserMessageText(message: Message): string {
@@ -2022,6 +2045,9 @@ export class AgentSession {
 		if (bindings.commandContextActions !== undefined) {
 			this._extensionCommandContextActions = bindings.commandContextActions;
 		}
+		if (bindings.abortHandler !== undefined) {
+			this._extensionAbortHandler = bindings.abortHandler;
+		}
 		if (bindings.shutdownHandler !== undefined) {
 			this._extensionShutdownHandler = bindings.shutdownHandler;
 		}
@@ -2186,7 +2212,13 @@ export class AgentSession {
 				getModel: () => this.model,
 				isIdle: () => !this.isStreaming,
 				getSignal: () => this.agent.signal,
-				abort: () => this.abort(),
+				abort: () => {
+					if (this._extensionAbortHandler) {
+						this._extensionAbortHandler();
+						return;
+					}
+					void this.abort();
+				},
 				hasPendingMessages: () => this.pendingMessageCount > 0,
 				shutdown: () => {
 					this._extensionShutdownHandler?.();
@@ -2962,7 +2994,10 @@ export class AgentSession {
 	 * @returns The resolved output file path.
 	 */
 	exportToJsonl(outputPath?: string): string {
-		const filePath = resolve(outputPath ?? `session-${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`);
+		const filePath = resolvePath(
+			outputPath ?? `session-${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`,
+			process.cwd(),
+		);
 		const dir = dirname(filePath);
 		if (!existsSync(dir)) {
 			mkdirSync(dir, { recursive: true });

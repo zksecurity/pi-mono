@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { getModel } from "../src/models.js";
-import { type BedrockOptions, streamBedrock } from "../src/providers/amazon-bedrock.js";
-import type { Context, Model } from "../src/types.js";
+import { getModel } from "../src/models.ts";
+import { type BedrockOptions, streamBedrock } from "../src/providers/amazon-bedrock.ts";
+import type { Context, Model } from "../src/types.ts";
+import { hasBedrockCredentials } from "./bedrock-utils.ts";
 
 interface BedrockThinkingPayload {
 	additionalModelRequestFields?: {
@@ -9,6 +10,13 @@ interface BedrockThinkingPayload {
 		output_config?: { effort?: string };
 		anthropic_beta?: string[];
 	};
+}
+
+class PayloadCaptured extends Error {
+	constructor() {
+		super("payload captured");
+		this.name = "PayloadCaptured";
+	}
 }
 
 function makeContext(): Context {
@@ -25,10 +33,9 @@ async function capturePayload(
 	const s = streamBedrock(model, makeContext(), {
 		...options,
 		reasoning: options?.reasoning ?? "high",
-		signal: AbortSignal.abort(),
 		onPayload: (payload) => {
 			capturedPayload = payload as BedrockThinkingPayload;
-			return payload;
+			throw new PayloadCaptured();
 		},
 	});
 
@@ -106,6 +113,39 @@ describe("Bedrock thinking payload", () => {
 	});
 });
 
+describe.skipIf(!hasBedrockCredentials())("Bedrock Claude max tokens E2E", () => {
+	it(
+		"uses the model maxTokens cap instead of Bedrock's 4096-token default for adaptive Claude models",
+		{ retry: 2, timeout: 180000 },
+		async () => {
+			const baseModel = getModel("amazon-bedrock", "global.anthropic.claude-sonnet-4-6");
+			const model: Model<"bedrock-converse-stream"> = {
+				...baseModel,
+				maxTokens: 6000,
+			};
+
+			const response = await streamBedrock(
+				model,
+				{
+					systemPrompt: "You are a deterministic text generator. Follow the requested output format exactly.",
+					messages: [
+						{
+							role: "user",
+							content:
+								"Output exactly 5200 repetitions of the token alpha, separated by single spaces. Do not number them. Do not use markdown. Do not add any other text.",
+							timestamp: Date.now(),
+						},
+					],
+				},
+				{ reasoning: "low" },
+			).result();
+
+			expect(response.stopReason, response.errorMessage).not.toBe("error");
+			expect(response.usage.output).toBeGreaterThan(4096);
+		},
+	);
+});
+
 describe("Application inference profile support", () => {
 	it("uses adaptive thinking when model.name contains the model name but ARN does not", async () => {
 		const baseModel = getModel("amazon-bedrock", "global.anthropic.claude-opus-4-6-v1");
@@ -137,10 +177,9 @@ describe("Application inference profile support", () => {
 				messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
 			},
 			{
-				signal: AbortSignal.abort(),
 				onPayload: (payload) => {
 					capturedPayload = payload;
-					return payload;
+					throw new PayloadCaptured();
 				},
 			},
 		);

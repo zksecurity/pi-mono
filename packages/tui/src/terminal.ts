@@ -1,14 +1,26 @@
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
-import { setKittyProtocolActive } from "./keys.js";
-import { StdinBuffer } from "./stdin-buffer.js";
+import { fileURLToPath } from "node:url";
+import { setKittyProtocolActive } from "./keys.ts";
+import { isNativeModifierPressed } from "./native-modifiers.ts";
+import { StdinBuffer } from "./stdin-buffer.ts";
 
 const cjsRequire = createRequire(import.meta.url);
 
 const TERMINAL_PROGRESS_KEEPALIVE_MS = 1000;
 const TERMINAL_PROGRESS_ACTIVE_SEQUENCE = "\x1b]9;4;3\x07";
 const TERMINAL_PROGRESS_CLEAR_SEQUENCE = "\x1b]9;4;0;\x07";
+const APPLE_TERMINAL_SHIFT_ENTER_SEQUENCE = "\x1b[13;2u";
+
+export function isAppleTerminalSession(): boolean {
+	return process.platform === "darwin" && process.env.TERM_PROGRAM === "Apple_Terminal";
+}
+
+export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boolean, isShiftPressed: boolean): string {
+	if (isAppleTerminal && data === "\r" && isShiftPressed) return APPLE_TERMINAL_SHIFT_ENTER_SEQUENCE;
+	return data;
+}
 
 /**
  * Minimal terminal interface for TUI
@@ -158,7 +170,13 @@ export class ProcessTerminal implements Terminal {
 			}
 
 			if (this.inputHandler) {
-				this.inputHandler(sequence);
+				const isAppleTerminal = sequence === "\r" && isAppleTerminalSession();
+				const input = normalizeAppleTerminalInput(
+					sequence,
+					isAppleTerminal,
+					isAppleTerminal && isNativeModifierPressed("shift"),
+				);
+				this.inputHandler(input);
 			}
 		});
 
@@ -210,23 +228,30 @@ export class ProcessTerminal implements Terminal {
 	private enableWindowsVTInput(): void {
 		if (process.platform !== "win32") return;
 		try {
-			// Dynamic require to avoid bundling koffi's 74MB of cross-platform
-			// native binaries into every compiled binary. Koffi is only needed
-			// on Windows for VT input support.
-			const koffi = cjsRequire("koffi");
-			const k32 = koffi.load("kernel32.dll");
-			const GetStdHandle = k32.func("void* __stdcall GetStdHandle(int)");
-			const GetConsoleMode = k32.func("bool __stdcall GetConsoleMode(void*, _Out_ uint32_t*)");
-			const SetConsoleMode = k32.func("bool __stdcall SetConsoleMode(void*, uint32_t)");
+			const arch = process.arch;
+			if (arch !== "x64" && arch !== "arm64") return;
 
-			const STD_INPUT_HANDLE = -10;
-			const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;
-			const handle = GetStdHandle(STD_INPUT_HANDLE);
-			const mode = new Uint32Array(1);
-			GetConsoleMode(handle, mode);
-			SetConsoleMode(handle, mode[0]! | ENABLE_VIRTUAL_TERMINAL_INPUT);
+			// Dynamic require so non-Windows and bundled/browser paths never load the
+			// native helper. In the npm package native/ is next to dist/; in compiled
+			// binary archives native/ is copied next to the executable.
+			const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+			const nativePath = path.join("native", "win32", "prebuilds", `win32-${arch}`, "win32-console-mode.node");
+			const candidates = [
+				path.join(moduleDir, "..", nativePath),
+				path.join(moduleDir, nativePath),
+				path.join(path.dirname(process.execPath), nativePath),
+			];
+			for (const modulePath of candidates) {
+				try {
+					const helper = cjsRequire(modulePath) as { enableVirtualTerminalInput?: () => boolean };
+					helper.enableVirtualTerminalInput?.();
+					return;
+				} catch {
+					// Try the next possible packaging location.
+				}
+			}
 		} catch {
-			// koffi not available — Shift+Tab won't be distinguishable from Tab
+			// Native helper not available — Shift+Tab won't be distinguishable from Tab.
 		}
 	}
 

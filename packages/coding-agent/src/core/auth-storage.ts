@@ -17,8 +17,9 @@ import { getOAuthApiKey, getOAuthProvider, getOAuthProviders } from "@earendil-w
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
-import { getAgentDir } from "../config.js";
-import { resolveConfigValue } from "./resolve-config-value.js";
+import { getAgentDir } from "../config.ts";
+import { normalizePath } from "../utils/paths.ts";
+import { resolveConfigValue } from "./resolve-config-value.ts";
 
 export type ApiKeyCredential = {
 	type: "api_key";
@@ -50,7 +51,11 @@ export interface AuthStorageBackend {
 }
 
 export class FileAuthStorageBackend implements AuthStorageBackend {
-	constructor(private authPath: string = join(getAgentDir(), "auth.json")) {}
+	private authPath: string;
+
+	constructor(authPath: string = join(getAgentDir(), "auth.json")) {
+		this.authPath = normalizePath(authPath);
+	}
 
 	private ensureParentDir(): void {
 		const dir = dirname(this.authPath);
@@ -194,8 +199,10 @@ export class AuthStorage {
 	private fallbackResolver?: (provider: string) => string | undefined;
 	private loadError: Error | null = null;
 	private errors: Error[] = [];
+	private storage: AuthStorageBackend;
 
-	private constructor(private storage: AuthStorageBackend) {
+	private constructor(storage: AuthStorageBackend) {
+		this.storage = storage;
 		this.reload();
 	}
 

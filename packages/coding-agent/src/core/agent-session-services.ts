@@ -1,14 +1,15 @@
 import { join } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
-import { getAgentDir } from "../config.js";
-import { AuthStorage } from "./auth-storage.js";
-import type { SessionStartEvent, ToolDefinition } from "./extensions/index.js";
-import { ModelRegistry } from "./model-registry.js";
-import { DefaultResourceLoader, type DefaultResourceLoaderOptions, type ResourceLoader } from "./resource-loader.js";
-import { type CreateAgentSessionOptions, type CreateAgentSessionResult, createAgentSession } from "./sdk.js";
-import type { SessionManager } from "./session-manager.js";
-import { SettingsManager } from "./settings-manager.js";
+import { getAgentDir } from "../config.ts";
+import { resolvePath } from "../utils/paths.ts";
+import { AuthStorage } from "./auth-storage.ts";
+import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
+import { ModelRegistry } from "./model-registry.ts";
+import { DefaultResourceLoader, type DefaultResourceLoaderOptions, type ResourceLoader } from "./resource-loader.ts";
+import { type CreateAgentSessionOptions, type CreateAgentSessionResult, createAgentSession } from "./sdk.ts";
+import type { SessionManager } from "./session-manager.ts";
+import { SettingsManager } from "./settings-manager.ts";
 
 /**
  * Non-fatal issues collected while creating services or sessions.
@@ -129,8 +130,8 @@ function applyExtensionFlagValues(
 export async function createAgentSessionServices(
 	options: CreateAgentSessionServicesOptions,
 ): Promise<AgentSessionServices> {
-	const cwd = options.cwd;
-	const agentDir = options.agentDir ?? getAgentDir();
+	const cwd = resolvePath(options.cwd);
+	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getAgentDir();
 	const authStorage = options.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, join(agentDir, "models.json"));

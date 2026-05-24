@@ -1,7 +1,8 @@
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { AgentSession } from "../../../core/agent-session.js";
-import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.js";
-import { theme } from "../theme/theme.js";
+import type { AgentSession } from "../../../core/agent-session.ts";
+import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
+import { theme } from "../theme/theme.ts";
 
 /**
  * Sanitize text for display in a single-line status.
@@ -16,7 +17,7 @@ function sanitizeStatusText(text: string): string {
 }
 
 /**
- * Format token counts (similar to web-ui)
+ * Format token counts for compact footer display.
  */
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -26,17 +27,33 @@ function formatTokens(count: number): string {
 	return `${Math.round(count / 1000000)}M`;
 }
 
+export function formatCwdForFooter(cwd: string, home: string | undefined): string {
+	if (!home) return cwd;
+
+	const resolvedCwd = resolve(cwd);
+	const resolvedHome = resolve(home);
+	const relativeToHome = relative(resolvedHome, resolvedCwd);
+	const isInsideHome =
+		relativeToHome === "" ||
+		(relativeToHome !== ".." && !relativeToHome.startsWith(`..${sep}`) && !isAbsolute(relativeToHome));
+
+	if (!isInsideHome) return cwd;
+	return relativeToHome === "" ? "~" : `~${sep}${relativeToHome}`;
+}
+
 /**
  * Footer component that shows pwd, token stats, and context usage.
  * Computes token/context stats from session, gets git branch and extension statuses from provider.
  */
 export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
+	private session: AgentSession;
+	private footerData: ReadonlyFooterDataProvider;
 
-	constructor(
-		private session: AgentSession,
-		private footerData: ReadonlyFooterDataProvider,
-	) {}
+	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
+		this.session = session;
+		this.footerData = footerData;
+	}
 
 	setSession(session: AgentSession): void {
 		this.session = session;
@@ -90,11 +107,7 @@ export class FooterComponent implements Component {
 		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
 
 		// Replace home directory with ~
-		let pwd = this.session.sessionManager.getCwd();
-		const home = process.env.HOME || process.env.USERPROFILE;
-		if (home && pwd.startsWith(home)) {
-			pwd = `~${pwd.slice(home.length)}`;
-		}
+		let pwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
 
 		// Add git branch if available
 		const branch = this.footerData.getGitBranch();

@@ -230,6 +230,8 @@ models: [{
 Use `openrouter` for OpenRouter-style `reasoning: { effort }` controls. Use `together` for Together-style `reasoning: { enabled }` controls; with `supportsReasoningEffort`, it also sends `reasoning_effort`. Use `qwen-chat-template` instead for local Qwen-compatible servers that read `chat_template_kwargs.enable_thinking`.
 Use `cacheControlFormat: "anthropic"` for OpenAI-compatible providers that expose Anthropic-style prompt caching via `cache_control` on the system prompt, last tool definition, and last user/assistant text content.
 
+For Anthropic-compatible providers using `api: "anthropic-messages"`, set `compat.forceAdaptiveThinking: true` on models or providers whose upstream model requires adaptive thinking (`thinking.type: "adaptive"` plus `output_config.effort`). Built-in adaptive Claude models set this automatically.
+
 > Migration note: Mistral moved from `openai-completions` to `mistral-conversations`.
 > Use `mistral-conversations` for native Mistral models.
 > If you intentionally route Mistral-compatible/custom endpoints through `openai-completions`, set `compat` flags explicitly as needed.
@@ -263,17 +265,28 @@ pi.registerProvider("corporate-ai", {
     name: "Corporate AI (SSO)",
 
     async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
-      // Option 1: Browser-based OAuth
-      callbacks.onAuth({ url: "https://sso.corp.com/authorize?..." });
-
-      // Option 2: Device code flow
-      callbacks.onDeviceCode({
-        userCode: "ABCD-1234",
-        verificationUri: "https://sso.corp.com/device"
+      const method = await callbacks.onSelect({
+        message: "Select login method:",
+        options: [
+          { id: "browser", label: "Browser OAuth" },
+          { id: "device", label: "Device code" }
+        ]
       });
+      if (!method) throw new Error("Login cancelled");
 
-      // Option 3: Prompt for token/code
-      const code = await callbacks.onPrompt({ message: "Enter SSO code:" });
+      let code: string;
+      if (method === "device") {
+        callbacks.onDeviceCode({
+          userCode: "ABCD-1234",
+          verificationUri: "https://sso.corp.com/device",
+          intervalSeconds: 5,
+          expiresInSeconds: 900
+        });
+        code = await pollDeviceCodeUntilComplete();
+      } else {
+        callbacks.onAuth({ url: "https://sso.corp.com/authorize?..." });
+        code = await callbacks.onPrompt({ message: "Enter SSO code:" });
+      }
 
       // Exchange for tokens (your implementation)
       const tokens = await exchangeCodeForTokens(code);
@@ -322,10 +335,21 @@ interface OAuthLoginCallbacks {
   onAuth(params: { url: string }): void;
 
   // Show device code (for device authorization flow)
-  onDeviceCode(params: { userCode: string; verificationUri: string }): void;
+  onDeviceCode(params: {
+    userCode: string;
+    verificationUri: string;
+    intervalSeconds?: number;
+    expiresInSeconds?: number;
+  }): void;
 
   // Prompt user for input (for manual token entry)
   onPrompt(params: { message: string }): Promise<string>;
+
+  // Show an interactive selector, e.g. to choose browser OAuth vs device code
+  onSelect(params: {
+    message: string;
+    options: { id: string; label: string }[];
+  }): Promise<string | undefined>;
 }
 ```
 
@@ -680,8 +704,9 @@ interface ProviderModelConfig {
   /** Custom headers for this specific model. */
   headers?: Record<string, string>;
 
-  /** OpenAI compatibility settings for openai-completions API. */
+  /** Compatibility settings for the selected API. */
   compat?: {
+    // openai-completions
     supportsStore?: boolean;
     supportsDeveloperRole?: boolean;
     supportsReasoningEffort?: boolean;
@@ -693,6 +718,13 @@ interface ProviderModelConfig {
     requiresReasoningContentOnAssistantMessages?: boolean;
     thinkingFormat?: "openai" | "openrouter" | "deepseek" | "together" | "zai" | "qwen" | "qwen-chat-template";
     cacheControlFormat?: "anthropic";
+
+    // anthropic-messages
+    supportsEagerToolInputStreaming?: boolean;
+    supportsLongCacheRetention?: boolean;
+    sendSessionAffinityHeaders?: boolean;
+    supportsCacheControlOnTools?: boolean;
+    forceAdaptiveThinking?: boolean;
   };
 }
 ```

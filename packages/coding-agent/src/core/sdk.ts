@@ -7,21 +7,22 @@ import {
 	type NativeToolsOptions,
 	streamSimple,
 } from "@earendil-works/pi-ai";
-import { getAgentDir } from "../config.js";
-import { AgentSession } from "./agent-session.js";
-import { formatNoModelsAvailableMessage } from "./auth-guidance.js";
-import { AuthStorage } from "./auth-storage.js";
-import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
-import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.js";
-import { convertToLlm } from "./messages.js";
-import { ModelRegistry } from "./model-registry.js";
-import { findInitialModel } from "./model-resolver.js";
-import type { ResourceLoader } from "./resource-loader.js";
-import { DefaultResourceLoader } from "./resource-loader.js";
-import { getDefaultSessionDir, SessionManager } from "./session-manager.js";
-import { SettingsManager } from "./settings-manager.js";
-import { isInstallTelemetryEnabled } from "./telemetry.js";
-import { time } from "./timings.js";
+import { getAgentDir } from "../config.ts";
+import { resolvePath } from "../utils/paths.ts";
+import { AgentSession } from "./agent-session.ts";
+import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
+import { AuthStorage } from "./auth-storage.ts";
+import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
+import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
+import { convertToLlm } from "./messages.ts";
+import { ModelRegistry } from "./model-registry.ts";
+import { findInitialModel } from "./model-resolver.ts";
+import type { ResourceLoader } from "./resource-loader.ts";
+import { DefaultResourceLoader } from "./resource-loader.ts";
+import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
+import { SettingsManager } from "./settings-manager.ts";
+import { isInstallTelemetryEnabled } from "./telemetry.ts";
+import { time } from "./timings.ts";
 import {
 	createBashTool,
 	createCodingTools,
@@ -34,7 +35,7 @@ import {
 	createWriteTool,
 	type ToolName,
 	withFileMutationQueue,
-} from "./tools/index.js";
+} from "./tools/index.ts";
 
 export interface CreateAgentSessionOptions {
 	/** Working directory for project-local discovery. Default: process.cwd() */
@@ -100,7 +101,7 @@ export interface CreateAgentSessionResult {
 
 // Re-exports
 
-export * from "./agent-session-runtime.js";
+export * from "./agent-session-runtime.ts";
 export type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -109,10 +110,10 @@ export type {
 	SlashCommandInfo,
 	SlashCommandSource,
 	ToolDefinition,
-} from "./extensions/index.js";
-export type { PromptTemplate } from "./prompt-templates.js";
-export type { Skill } from "./skills.js";
-export type { Tool } from "./tools/index.js";
+} from "./extensions/index.ts";
+export type { PromptTemplate } from "./prompt-templates.ts";
+export type { Skill } from "./skills.ts";
+export type { Tool } from "./tools/index.ts";
 
 export {
 	withFileMutationQueue,
@@ -137,7 +138,15 @@ function getDefaultAgentDir(): string {
 function getAttributionHeaders(
 	model: Model<any>,
 	settingsManager: SettingsManager,
+	sessionId?: string,
 ): Record<string, string> | undefined {
+	if (
+		sessionId &&
+		(model.provider === "opencode" || model.provider === "opencode-go" || model.baseUrl.includes("opencode.ai"))
+	) {
+		return { "x-opencode-session": sessionId, "x-opencode-client": "pi" };
+	}
+
 	if (!isInstallTelemetryEnabled(settingsManager)) {
 		return undefined;
 	}
@@ -200,8 +209,8 @@ function getAttributionHeaders(
  * ```
  */
 export async function createAgentSession(options: CreateAgentSessionOptions = {}): Promise<CreateAgentSessionResult> {
-	const cwd = options.cwd ?? options.sessionManager?.getCwd() ?? process.cwd();
-	const agentDir = options.agentDir ?? getDefaultAgentDir();
+	const cwd = resolvePath(options.cwd ?? options.sessionManager?.getCwd() ?? process.cwd());
+	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getDefaultAgentDir();
 	let resourceLoader = options.resourceLoader;
 
 	// Use provided or create AuthStorage and ModelRegistry
@@ -340,7 +349,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				throw new Error(auth.error);
 			}
 			const providerRetrySettings = settingsManager.getProviderRetrySettings();
-			const attributionHeaders = getAttributionHeaders(model, settingsManager);
+			const attributionHeaders = getAttributionHeaders(model, settingsManager, options?.sessionId);
 			return streamSimple(model, context, {
 				...options,
 				apiKey: auth.apiKey,
