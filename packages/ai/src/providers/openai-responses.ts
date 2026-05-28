@@ -228,6 +228,7 @@ function createClient(
 
 function buildParams(model: Model<"openai-responses">, context: Context, options?: OpenAIResponsesOptions) {
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS);
+	type ResponseInclude = NonNullable<ResponseCreateParamsStreaming["include"]>[number];
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention);
 	const compat = getCompat(model);
@@ -239,6 +240,7 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
 		store: false,
 	};
+	const include = new Set<ResponseInclude>();
 
 	if (options?.maxTokens) {
 		params.max_output_tokens = options?.maxTokens;
@@ -252,8 +254,15 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 		params.service_tier = options.serviceTier;
 	}
 
-	if (context.tools && context.tools.length > 0) {
-		params.tools = convertResponsesTools(context.tools);
+	const convertedTools = convertResponsesTools(context.tools, {
+		nativeWebSearch: options?.nativeTools?.webSearch,
+	});
+	if (convertedTools.length > 0) {
+		params.tools = convertedTools;
+	}
+	if (options?.nativeTools?.webSearch) {
+		include.add("web_search_call.action.sources");
+		include.add("web_search_call.results");
 	}
 
 	if (model.reasoning) {
@@ -265,12 +274,16 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 				effort: effort as NonNullable<typeof params.reasoning>["effort"],
 				summary: options?.reasoningSummary || "auto",
 			};
-			params.include = ["reasoning.encrypted_content"];
+			include.add("reasoning.encrypted_content");
 		} else if (model.provider !== "github-copilot" && model.thinkingLevelMap?.off !== null) {
 			params.reasoning = {
 				effort: (model.thinkingLevelMap?.off ?? "none") as NonNullable<typeof params.reasoning>["effort"],
 			};
 		}
+	}
+
+	if (include.size > 0) {
+		params.include = [...include];
 	}
 
 	return params;
