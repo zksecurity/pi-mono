@@ -58,6 +58,11 @@ const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS = 15_000;
 const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 const WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE = 1009;
 
+// SSE read timeouts: the first read can be slow (xhigh reasoning delays first byte),
+// subsequent reads should arrive regularly as the model streams output.
+const SSE_FIRST_READ_TIMEOUT_MS = 300_000; // 5 minutes for initial reasoning
+const SSE_READ_TIMEOUT_MS = 90_000; // 90 seconds between chunks
+
 const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 	"completed",
 	"incomplete",
@@ -552,11 +557,29 @@ async function processStream(
 	model: Model<"openai-codex-responses">,
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
-	await processResponsesStream(mapCodexEvents(parseSSE(response, options?.signal)), output, stream, model, {
-		serviceTier: options?.serviceTier,
-		resolveServiceTier: resolveCodexServiceTier,
-		applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
-	});
+	let sawCompletion = false;
+	const trackCompletion = async function* (
+		events: AsyncIterable<ResponseStreamEvent>,
+	): AsyncGenerator<ResponseStreamEvent> {
+		for await (const event of events) {
+			if (event.type === "response.completed") sawCompletion = true;
+			yield event;
+		}
+	};
+	await processResponsesStream(
+		trackCompletion(mapCodexEvents(parseSSE(response, options?.signal))),
+		output,
+		stream,
+		model,
+		{
+			serviceTier: options?.serviceTier,
+			resolveServiceTier: resolveCodexServiceTier,
+			applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
+		},
+	);
+	if (!sawCompletion) {
+		throw new Error("SSE stream ended before response.completed");
+	}
 }
 
 class CodexApiError extends Error {
@@ -634,22 +657,45 @@ async function* parseSSE(response: Response, signal?: AbortSignal): AsyncGenerat
 	if (!response.body) return;
 
 	const reader = response.body.getReader();
+
+	// Wire abort signal to reader so session.abort() actually unblocks reader.read()
+	const onAbort = () => reader.cancel("Request was aborted").catch(() => {});
+	signal?.addEventListener("abort", onAbort);
+
 	const decoder = new TextDecoder();
 	let buffer = "";
-	const onAbort = () => {
-		void reader.cancel().catch(() => {});
-	};
-	signal?.addEventListener("abort", onAbort, { once: true });
+	let timeoutId: ReturnType<typeof setTimeout> | undefined;
+	let isFirstRead = true;
 
 	try {
 		while (true) {
 			if (signal?.aborted) {
 				throw new Error("Request was aborted");
 			}
-			const { done, value } = await reader.read();
+
+			const timeoutMs = isFirstRead ? SSE_FIRST_READ_TIMEOUT_MS : SSE_READ_TIMEOUT_MS;
+			timeoutId = setTimeout(() => {
+				reader.cancel("SSE read timeout").catch(() => {});
+			}, timeoutMs);
+
+			let done: boolean;
+			let value: Uint8Array | undefined;
+			try {
+				({ done, value } = await reader.read());
+			} catch {
+				clearTimeout(timeoutId);
+				timeoutId = undefined;
+				// reader.cancel() may cause read() to reject in some runtimes (e.g. Bun)
+				if (signal?.aborted) throw new Error("Request was aborted");
+				throw new Error(`SSE read failed after ${timeoutMs / 1000}s timeout or stream error`);
+			}
+			clearTimeout(timeoutId);
+			timeoutId = undefined;
+			isFirstRead = false;
 			if (signal?.aborted) {
 				throw new Error("Request was aborted");
 			}
+
 			if (done) break;
 			buffer += decoder.decode(value, { stream: true });
 
@@ -679,6 +725,7 @@ async function* parseSSE(response: Response, signal?: AbortSignal): AsyncGenerat
 			}
 		}
 	} finally {
+		if (timeoutId) clearTimeout(timeoutId);
 		signal?.removeEventListener("abort", onAbort);
 		try {
 			await reader.cancel();
