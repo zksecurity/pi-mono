@@ -87,6 +87,26 @@ export interface ProviderResponse {
 	headers: Record<string, string>;
 }
 
+export interface NativeToolUserLocation {
+	type?: "approximate";
+	city?: string;
+	country?: string;
+	region?: string;
+	timezone?: string;
+}
+
+export interface NativeWebSearchOptions {
+	allowedDomains?: string[];
+	blockedDomains?: string[];
+	maxUses?: number;
+	searchContextSize?: "low" | "medium" | "high";
+	userLocation?: NativeToolUserLocation;
+}
+
+export interface NativeToolsOptions {
+	webSearch?: boolean | NativeWebSearchOptions;
+}
+
 export interface StreamOptions {
 	temperature?: number;
 	maxTokens?: number;
@@ -162,6 +182,11 @@ export interface StreamOptions {
 	 * proxy variables.
 	 */
 	env?: ProviderEnv;
+	/**
+	 * Provider-native built-in tools (for example, hosted web search).
+	 * Providers ignore tools they don't support.
+	 */
+	nativeTools?: NativeToolsOptions;
 }
 
 export type ProviderStreamOptions = StreamOptions & Record<string, unknown>;
@@ -279,12 +304,14 @@ export interface Usage {
 	/** Subset of `cacheWrite` written with 1h retention. Only Anthropic reports this split. */
 	cacheWrite1h?: number;
 	totalTokens: number;
+	extras?: Record<string, number>;
 	cost: {
 		input: number;
 		output: number;
 		cacheRead: number;
 		cacheWrite: number;
 		total: number;
+		extras?: Record<string, number>;
 	};
 }
 

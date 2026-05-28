@@ -19,6 +19,7 @@ import type {
 	Context,
 	ImageContent,
 	Model,
+	NativeWebSearchOptions,
 	StopReason,
 	TextContent,
 	TextSignatureV1,
@@ -81,6 +82,7 @@ export interface ConvertResponsesMessagesOptions {
 
 export interface ConvertResponsesToolsOptions {
 	strict?: boolean | null;
+	nativeWebSearch?: boolean | NativeWebSearchOptions;
 }
 
 // =============================================================================
@@ -270,15 +272,72 @@ export function convertResponsesMessages<TApi extends Api>(
 // Tool conversion
 // =============================================================================
 
-export function convertResponsesTools(tools: Tool[], options?: ConvertResponsesToolsOptions): OpenAITool[] {
+function normalizeNativeWebSearch(
+	webSearch: boolean | NativeWebSearchOptions | undefined,
+): NativeWebSearchOptions | undefined {
+	if (!webSearch) return undefined;
+	if (webSearch === true) return {};
+	return webSearch;
+}
+
+function convertOpenAIWebSearchTool(webSearch: boolean | NativeWebSearchOptions | undefined): OpenAITool | undefined {
+	const config = normalizeNativeWebSearch(webSearch);
+	if (!config) return undefined;
+
+	if (config.allowedDomains?.length && config.blockedDomains?.length) {
+		throw new Error("OpenAI web search supports allowedDomains or blockedDomains, not both.");
+	}
+	if (config.blockedDomains?.length) {
+		throw new Error("OpenAI web search does not support blockedDomains. Use allowedDomains instead.");
+	}
+
+	const tool: OpenAITool = {
+		type: "web_search",
+	};
+
+	if (config.allowedDomains?.length) {
+		tool.filters = {
+			allowed_domains: config.allowedDomains,
+		};
+	}
+
+	if (config.searchContextSize) {
+		tool.search_context_size = config.searchContextSize;
+	}
+
+	if (config.userLocation) {
+		tool.user_location = {
+			type: config.userLocation.type ?? "approximate",
+			city: config.userLocation.city,
+			country: config.userLocation.country,
+			region: config.userLocation.region,
+			timezone: config.userLocation.timezone,
+		};
+	}
+
+	return tool;
+}
+
+export function convertResponsesTools(tools: Tool[] | undefined, options?: ConvertResponsesToolsOptions): OpenAITool[] {
 	const strict = options?.strict === undefined ? false : options.strict;
-	return tools.map((tool) => ({
-		type: "function",
-		name: tool.name,
-		description: tool.description,
-		parameters: tool.parameters as any, // TypeBox already generates JSON Schema
-		strict,
-	}));
+	const output: OpenAITool[] = [];
+
+	for (const tool of tools ?? []) {
+		output.push({
+			type: "function",
+			name: tool.name,
+			description: tool.description,
+			parameters: tool.parameters as any, // TypeBox already generates JSON Schema
+			strict,
+		});
+	}
+
+	const webSearchTool = convertOpenAIWebSearchTool(options?.nativeWebSearch);
+	if (webSearchTool) {
+		output.push(webSearchTool);
+	}
+
+	return output;
 }
 
 // =============================================================================
@@ -507,6 +566,11 @@ export async function processResponsesStream<TApi extends Api>(
 					totalTokens: response.usage.total_tokens || 0,
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 				};
+			}
+			const wsCount = response?.output?.filter((item: any) => item.type === "web_search_call").length ?? 0;
+			if (wsCount > 0) {
+				output.usage.extras = { webSearch: wsCount };
+				output.usage.cost.extras = { webSearch: wsCount * 0.01 };
 			}
 			calculateCost(model, output.usage);
 			if (options?.applyServiceTierPricing) {

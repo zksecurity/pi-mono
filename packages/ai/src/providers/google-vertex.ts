@@ -29,6 +29,7 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import type { GoogleThinkingLevel } from "./google-shared.ts";
 import {
+	convertGoogleSearchTool,
 	convertMessages,
 	convertTools,
 	isThinkingPart,
@@ -62,6 +63,10 @@ const THINKING_LEVEL_MAP: Record<GoogleThinkingLevel, ThinkingLevel> = {
 
 // Counter for generating unique tool call IDs
 let toolCallCounter = 0;
+
+// Google charges $35 per 1,000 grounded queries via Google Search grounding.
+// See https://ai.google.dev/gemini-api/docs/pricing — "Grounding with Google Search".
+const GOOGLE_SEARCH_GROUNDING_COST = 0.035;
 
 export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 	model: Model<"google-vertex">,
@@ -104,6 +109,7 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
+			let webSearchQueryCount = 0;
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
 			for await (const chunk of googleStream) {
@@ -111,6 +117,8 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 				// responseId is documented there as an output-only identifier for each response.
 				output.responseId ||= chunk.responseId;
 				const candidate = chunk.candidates?.[0];
+				const queries = candidate?.groundingMetadata?.webSearchQueries?.length ?? 0;
+				if (queries > webSearchQueryCount) webSearchQueryCount = queries;
 				if (candidate?.content?.parts) {
 					for (const part of candidate.content.parts) {
 						if (part.text !== undefined) {
@@ -246,6 +254,10 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 							total: 0,
 						},
 					};
+					if (webSearchQueryCount > 0) {
+						output.usage.extras = { webSearch: webSearchQueryCount };
+						output.usage.cost.extras = { webSearch: webSearchQueryCount * GOOGLE_SEARCH_GROUNDING_COST };
+					}
 					calculateCost(model, output.usage);
 				}
 			}
@@ -461,10 +473,18 @@ function buildParams(
 		generationConfig.maxOutputTokens = options.maxTokens;
 	}
 
+	const tools: NonNullable<GenerateContentConfig["tools"]> = [];
+	if (context.tools && context.tools.length > 0) {
+		const fn = convertTools(context.tools);
+		if (fn) tools.push(...fn);
+	}
+	const googleSearch = convertGoogleSearchTool(options.nativeTools?.webSearch);
+	if (googleSearch) tools.push(googleSearch);
+
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
 		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
-		...(context.tools && context.tools.length > 0 && { tools: convertTools(context.tools) }),
+		...(tools.length > 0 && { tools }),
 	};
 
 	if (context.tools && context.tools.length > 0 && options.toolChoice) {
