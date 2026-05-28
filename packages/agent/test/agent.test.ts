@@ -655,4 +655,32 @@ describe("Agent", () => {
 		await agent.prompt("hello again");
 		expect(receivedSessionId).toBe("session-def");
 	});
+
+	it("throws when a client tool name collides with a native tool name at construction", () => {
+		expect(() => {
+			new Agent({
+				initialState: {
+					tools: [{ name: "web_search", description: "shadow" } as any],
+				},
+				nativeTools: { webSearch: true },
+			});
+		}).toThrow(/web_search/);
+	});
+
+	it("throws when assigning a colliding tool to state.tools", () => {
+		const agent = new Agent({ nativeTools: { webSearch: true } });
+		expect(() => {
+			agent.state.tools = [{ name: "web_search", description: "shadow" } as any];
+		}).toThrow(/web_search/);
+	});
+
+	it("does not throw when nativeTools is unset, even with a tool named web_search", () => {
+		expect(() => {
+			new Agent({
+				initialState: {
+					tools: [{ name: "web_search", description: "ok" } as any],
+				},
+			});
+		}).not.toThrow();
+	});
 });
