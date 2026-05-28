@@ -2,8 +2,8 @@
  * Shared utilities for Google Generative AI and Google Vertex providers.
  */
 
-import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
-import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.ts";
+import { type Content, FinishReason, FunctionCallingConfigMode, type GoogleSearch, type Part } from "@google/genai";
+import type { Context, ImageContent, Model, NativeWebSearchOptions, StopReason, TextContent, Tool } from "../types.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -285,6 +285,38 @@ export function convertTools(
 			})),
 		},
 	];
+}
+
+/**
+ * Convert pi's NativeWebSearchOptions into a Gemini { googleSearch } tool entry.
+ *
+ * Gemini's grounding tool is `googleSearch` (Gemini 2.x+). The legacy
+ * `googleSearchRetrieval` is for Gemini 1.5 only and is not handled here since
+ * the registered models are all 2.x+.
+ *
+ * Mapping notes:
+ * - `blockedDomains` → `excludeDomains` (Vertex only; ignored by Gemini API).
+ * - `allowedDomains` has no Gemini equivalent — throws if provided.
+ * - `maxUses`, `searchContextSize`, `userLocation` are not supported by Gemini
+ *   and are silently ignored.
+ */
+export function convertGoogleSearchTool(
+	webSearch: boolean | NativeWebSearchOptions | undefined,
+): { googleSearch: GoogleSearch } | undefined {
+	if (!webSearch) return undefined;
+	const config: NativeWebSearchOptions = webSearch === true ? {} : webSearch;
+
+	if (config.allowedDomains?.length) {
+		throw new Error(
+			"Gemini google_search does not support allowedDomains. Use blockedDomains (Vertex only) or omit.",
+		);
+	}
+
+	const googleSearch: GoogleSearch = {};
+	if (config.blockedDomains?.length) {
+		googleSearch.excludeDomains = config.blockedDomains;
+	}
+	return { googleSearch };
 }
 
 /**
