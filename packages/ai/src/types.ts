@@ -104,6 +104,38 @@ export interface NativeToolsOptions {
 	webSearch?: boolean | NativeWebSearchOptions;
 }
 
+/**
+ * Returns the canonical tool names that provider-native tools occupy on the
+ * wire. These names are reserved: a client-side tool with the same name would
+ * collide when both are sent to the provider.
+ */
+export function getReservedNativeToolNames(nativeTools: NativeToolsOptions | undefined): string[] {
+	if (!nativeTools) return [];
+	const names: string[] = [];
+	if (nativeTools.webSearch) names.push("web_search");
+	return names;
+}
+
+/**
+ * Throws if any client tool name collides with a provider-native tool name.
+ * Call at config/session construction time so misconfiguration surfaces early.
+ */
+export function assertNoNativeToolNameCollision(
+	clientToolNames: readonly string[],
+	nativeTools: NativeToolsOptions | undefined,
+): void {
+	const reserved = new Set(getReservedNativeToolNames(nativeTools));
+	if (reserved.size === 0) return;
+	const conflicts = clientToolNames.filter((name) => reserved.has(name));
+	if (conflicts.length === 0) return;
+	const plural = conflicts.length > 1;
+	const list = conflicts.map((n) => `"${n}"`).join(", ");
+	throw new Error(
+		`Tool name${plural ? "s" : ""} ${list} ${plural ? "collide" : "collides"} with provider-native tool name${plural ? "s" : ""}. ` +
+			`Rename the client tool${plural ? "s" : ""} or disable the conflicting native tool.`,
+	);
+}
+
 export interface StreamOptions {
 	temperature?: number;
 	maxTokens?: number;
