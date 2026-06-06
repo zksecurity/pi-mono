@@ -64,6 +64,18 @@ If rebase conflicts occur:
 - If a conflict is in a file you did not modify, abort and ask the user.
 - Never force push.
 
+## Fork Maintenance (zkao)
+
+This repo is a fork. `zkao` is our long-lived working branch; `main` tracks upstream releases. We periodically rebase `zkao` onto `main`.
+
+Before every rebase of `zkao`:
+
+- Create a backup branch named `zkao-v<version>-backup`, where `<version>` is the upstream release `zkao` is currently synced to (see the latest `Merge upstream/main into zkao (sync to vX.Y.Z)` commit), not the rebase target.
+- Record the backup branch in the README "zkao backups" table (branch name, synced version, date, what it preserved).
+- Confirm uncommitted/untracked work is committed first; a backup branch only captures committed state.
+
+Keep these backup branches around (do not delete them); they are our recovery point if a rebase goes wrong.
+
 ## Issues and PRs
 
 See `CONTRIBUTING.md` for the contributor gate (auto-close workflows, `lgtm`/`lgtmi`, quality bar).
