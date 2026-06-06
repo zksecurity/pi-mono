@@ -94,6 +94,15 @@ We treat npm dependency changes as reviewed code changes.
 - CI installs with `npm ci --ignore-scripts`, and a scheduled GitHub workflow runs `npm audit --omit=dev` plus `npm audit signatures --omit=dev`.
 - Shrinkwrap generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
 
+## zkao fork maintenance
+
+This is a fork. `zkao` is our long-lived working branch and is periodically rebased onto `main` (upstream releases). Before each rebase we snapshot `zkao` into a backup branch named `zkao-v<version>-backup`, where `<version>` is the upstream release `zkao` was synced to at that time. See [AGENTS.md](AGENTS.md) for the full procedure.
+
+| Backup branch | Synced version | Date | Notes |
+|---------------|----------------|------|-------|
+| `zkao-v0.75.5-backup` | v0.75.5 | 2026-05-28 | Snapshot before rebasing onto `main` (v0.77.0); web search support + zkao CI/release workflows |
+| `zkao-v0.77.0-backup` | v0.77.0 | 2026-06-06 | Snapshot before rebasing onto `main` (v0.78.1); Gemini web-search × function-calling combination fix |
+
 ## License
 
 MIT
