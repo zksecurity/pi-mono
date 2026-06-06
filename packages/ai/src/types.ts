@@ -319,6 +319,36 @@ export interface ToolCall {
 	thoughtSignature?: string; // Google-specific: opaque signature for reusing thought context
 }
 
+/**
+ * A provider-executed (server-side) built-in tool invocation, e.g. Gemini's
+ * `google_search` grounding when combined with client-side function calling.
+ *
+ * Unlike `ToolCall`, the provider runs the tool itself and returns both the call
+ * and its result inline within the model's turn. Gemini's "tool context
+ * circulation" (enabled via `tool_config.include_server_side_tool_invocations`)
+ * requires these parts to be replayed verbatim — including their thought
+ * signatures — on every subsequent turn, or the API rejects the request. We
+ * therefore capture each call/response pair so the Google providers can round-trip
+ * it. Other providers ignore these blocks.
+ *
+ * See: https://ai.google.dev/gemini-api/docs/tool-combination
+ */
+export interface ServerToolUse {
+	type: "serverToolUse";
+	/** Unique id linking the server-side call to its response. */
+	id?: string;
+	/** Provider tool identifier, e.g. "GOOGLE_SEARCH_WEB". */
+	toolType?: string;
+	/** Arguments from the server-side toolCall part (e.g. search queries). */
+	args?: Record<string, any>;
+	/** Result from the server-side toolResponse part. */
+	response?: Record<string, any>;
+	/** thoughtSignature attached to the toolCall part. */
+	callSignature?: string;
+	/** thoughtSignature attached to the toolResponse part. */
+	responseSignature?: string;
+}
+
 export interface Usage {
 	input: number;
 	output: number;
@@ -346,7 +376,7 @@ export interface UserMessage {
 
 export interface AssistantMessage {
 	role: "assistant";
-	content: (TextContent | ThinkingContent | ToolCall)[];
+	content: (TextContent | ThinkingContent | ToolCall | ServerToolUse)[];
 	api: Api;
 	provider: Provider;
 	model: string;
