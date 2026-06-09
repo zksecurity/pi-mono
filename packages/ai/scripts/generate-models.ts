@@ -233,13 +233,24 @@ function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 		modelId.includes("opus-4-8") ||
 		modelId.includes("opus-4.8") ||
 		modelId.includes("sonnet-4-6") ||
-		modelId.includes("sonnet-4.6")
+		modelId.includes("sonnet-4.6") ||
+		isAnthropicFableModel(modelId)
 	);
 }
 
 function isAnthropicTemperatureUnsupportedModel(modelId: string): boolean {
 	const id = modelId.toLowerCase();
-	return id.includes("opus-4-7") || id.includes("opus-4.7") || id.includes("opus-4-8") || id.includes("opus-4.8");
+	return (
+		id.includes("opus-4-7") ||
+		id.includes("opus-4.7") ||
+		id.includes("opus-4-8") ||
+		id.includes("opus-4.8") ||
+		isAnthropicFableModel(modelId)
+	);
+}
+
+function isAnthropicFableModel(modelId: string): boolean {
+	return modelId.toLowerCase().includes("claude-fable");
 }
 
 function mergeAnthropicMessagesCompat(model: Model<Api>, compat: AnthropicMessagesCompat): void {
@@ -291,7 +302,8 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		model.id.includes("opus-4-7") ||
 		model.id.includes("opus-4.7") ||
 		model.id.includes("opus-4-8") ||
-		model.id.includes("opus-4.8")
+		model.id.includes("opus-4.8") ||
+		isAnthropicFableModel(model.id)
 	) {
 		mergeThinkingLevelMap(model, { xhigh: "xhigh" });
 	}
@@ -300,6 +312,9 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	if (model.api === "anthropic-messages" && isAnthropicTemperatureUnsupportedModel(model.id)) {
 		mergeAnthropicMessagesCompat(model, { supportsTemperature: false });
+	}
+	if (model.api === "anthropic-messages" && isAnthropicFableModel(model.id)) {
+		mergeAnthropicMessagesCompat(model, { supportsDisabledThinking: false });
 	}
 	if (model.api === "openai-completions" && model.id.includes("deepseek-v4")) {
 		mergeThinkingLevelMap(

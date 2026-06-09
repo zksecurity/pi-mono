@@ -178,6 +178,7 @@ function getAnthropicCompat(
 			model.compat?.sendSessionAffinityHeaders ?? !!(isFireworks || isCloudflareAiGatewayAnthropic),
 		supportsCacheControlOnTools: model.compat?.supportsCacheControlOnTools ?? !isFireworks,
 		supportsTemperature: model.compat?.supportsTemperature ?? true,
+		supportsDisabledThinking: model.compat?.supportsDisabledThinking ?? true,
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 	};
 }
@@ -994,7 +995,11 @@ function buildParams(
 				};
 			}
 		} else if (options?.thinkingEnabled === false) {
-			params.thinking = { type: "disabled" };
+			// Some models (e.g. Claude Fable 5) reject an explicit disabled value;
+			// omitting the thinking param entirely has the same effect there.
+			if (compat.supportsDisabledThinking) {
+				params.thinking = { type: "disabled" };
+			}
 		}
 	}
 

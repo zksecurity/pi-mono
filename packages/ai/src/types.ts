@@ -553,6 +553,13 @@ export interface AnthropicMessagesCompat {
 	 */
 	supportsTemperature?: boolean;
 	/**
+	 * Whether the model accepts an explicit `thinking: {type: "disabled"}`
+	 * request field. Claude Fable 5 rejects it (400) — omit `thinking` entirely
+	 * to run without thinking on such models.
+	 * Default: true.
+	 */
+	supportsDisabledThinking?: boolean;
+	/**
 	 * Whether to force adaptive thinking (`thinking.type: "adaptive"` plus
 	 * `output_config.effort`) regardless of the model id. Built-in models that
 	 * require adaptive thinking set this in generated metadata. Custom
