@@ -97,6 +97,7 @@ This is a fork. `zkao` is our long-lived working branch and is periodically reba
 | `zkao-v0.75.5-backup` | v0.75.5 | 2026-05-28 | Snapshot before rebasing onto `main` (v0.77.0); web search support + zkao CI/release workflows |
 | `zkao-v0.77.0-backup` | v0.77.0 | 2026-06-06 | Snapshot before rebasing onto `main` (v0.78.1); Gemini web-search × function-calling combination fix |
 | `zkao-v0.78.1-backup` | v0.78.1 | 2026-06-09 | Snapshot before rebasing onto `main` (v0.79.0); client/provider tool-name collision fix, Codex SSE read-timeout fix, Gemini web-search tool conversion tests |
+| `zkao-v0.79.0-backup` | v0.79.0 | 2026-06-12 | Snapshot before rebasing onto `main` (v0.79.1); preserves our Claude Fable 5 support commit, dropped during the rebase in favor of upstream's own Fable 5 metadata |
 
 ## License
 
