@@ -1093,30 +1093,33 @@ function convertMessages(
 						});
 						continue;
 					}
-					if (block.thinking.trim().length === 0) continue;
-					// If thinking signature is missing/empty (e.g., from aborted stream),
-					// convert to plain text for Anthropic. Some compatible providers emit
-					// and accept empty signatures, so let marked models preserve the block.
-					if (!block.thinkingSignature || block.thinkingSignature.trim().length === 0) {
-						blocks.push(
-							allowEmptySignature
-								? {
-										type: "thinking",
-										thinking: sanitizeSurrogates(block.thinking),
-										signature: "",
-									}
-								: {
-										type: "text",
-										text: sanitizeSurrogates(block.thinking),
-									},
-						);
-					} else {
+					// Signed thinking blocks must be echoed back as received — including
+					// ones with an empty summary (adaptive thinking can emit a signature
+					// with no text) — or the API rejects the request with a 400.
+					if (block.thinkingSignature && block.thinkingSignature.trim().length > 0) {
 						blocks.push({
 							type: "thinking",
 							thinking: sanitizeSurrogates(block.thinking),
 							signature: block.thinkingSignature,
 						});
+						continue;
 					}
+					if (block.thinking.trim().length === 0) continue;
+					// If thinking signature is missing/empty (e.g., from aborted stream),
+					// convert to plain text for Anthropic. Some compatible providers emit
+					// and accept empty signatures, so let marked models preserve the block.
+					blocks.push(
+						allowEmptySignature
+							? {
+									type: "thinking",
+									thinking: sanitizeSurrogates(block.thinking),
+									signature: "",
+								}
+							: {
+									type: "text",
+									text: sanitizeSurrogates(block.thinking),
+								},
+					);
 				} else if (block.type === "toolCall") {
 					blocks.push({
 						type: "tool_use",
