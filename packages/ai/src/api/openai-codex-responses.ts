@@ -601,6 +601,11 @@ function buildRequestBody(
 		toolOptions: { strict: null, supportsStrictMode, supportsOpenAIGrammarTools },
 		configurationUpdateEffort,
 	});
+	const include = new Set<string>(["reasoning.encrypted_content"]);
+	if (options?.nativeTools?.webSearch) {
+		include.add("web_search_call.action.sources");
+		include.add("web_search_call.results");
+	}
 
 	const body: RequestBody = {
 		model: model.id,
@@ -608,7 +613,7 @@ function buildRequestBody(
 		stream: true,
 		input: messages,
 		text: { verbosity: options?.textVerbosity || "low" },
-		include: ["reasoning.encrypted_content"],
+		include: [...include],
 		prompt_cache_key: cacheSessionId,
 		tool_choice: options?.toolChoice ?? "auto",
 		parallel_tool_calls: true,
@@ -626,12 +631,15 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier;
 	}
 
-	if (transcriptTools.requestTools.length > 0) {
-		body.tools = convertResponsesTools(transcriptTools.requestTools, {
-			strict: null,
-			supportsStrictMode,
-			supportsOpenAIGrammarTools,
-		});
+	const convertedTools = convertResponsesTools(transcriptTools.requestTools, {
+		strict: null,
+		supportsStrictMode,
+		supportsOpenAIGrammarTools,
+		nativeWebSearch: options?.nativeTools?.webSearch,
+		provider: model.provider,
+	});
+	if (convertedTools.length > 0) {
+		body.tools = convertedTools;
 	}
 
 	if (options?.reasoningEffort !== undefined) {
