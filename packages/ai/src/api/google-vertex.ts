@@ -32,6 +32,9 @@ import { getSystemMessageText } from "../utils/text.ts";
 import { collapseSystemMessages, getCurrentTools, getInitialSystemMessage } from "../utils/transcript.ts";
 import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./google-shared.ts";
 import {
+	applyServerToolPart,
+	buildGoogleToolConfig,
+	convertGoogleSearchTool,
 	convertMessages,
 	convertTools,
 	getDisabledGoogleThinkingConfig,
@@ -64,6 +67,10 @@ const GCP_VERTEX_CREDENTIALS_MARKER = "gcp-vertex-credentials";
 
 // Counter for generating unique tool call IDs
 let toolCallCounter = 0;
+
+// Google charges $35 per 1,000 grounded queries via Google Search grounding.
+// See https://ai.google.dev/gemini-api/docs/pricing — "Grounding with Google Search".
+const GOOGLE_SEARCH_GROUNDING_COST = 0.035;
 
 export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 	model: Model<"google-vertex">,
@@ -110,6 +117,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
+			let webSearchQueryCount = 0;
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
 			for await (const chunk of googleStream) {
@@ -118,6 +126,8 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 				// responseId is documented there as an output-only identifier for each response.
 				output.responseId ||= chunk.responseId;
 				const candidate = chunk.candidates?.[0];
+				const queries = candidate?.groundingMetadata?.webSearchQueries?.length ?? 0;
+				if (queries > webSearchQueryCount) webSearchQueryCount = queries;
 				if (candidate?.content?.parts) {
 					for (const part of candidate.content.parts) {
 						if (part.text !== undefined) {
@@ -226,6 +236,34 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 							});
 							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
 						}
+
+						// Server-side built-in tool calls (e.g. google_search grounding combined with
+						// function calling). Recorded in content for verbatim replay. The model executes
+						// them itself, so they raise no tool-call events — but they are announced via
+						// `servertooluse` so consumers rebuilding from events keep them.
+						if (part.toolCall || part.toolResponse) {
+							if (currentBlock) {
+								if (currentBlock.type === "text") {
+									stream.push({
+										type: "text_end",
+										contentIndex: blockIndex(),
+										content: currentBlock.text,
+										partial: output,
+									});
+								} else {
+									stream.push({
+										type: "thinking_end",
+										contentIndex: blockIndex(),
+										content: currentBlock.thinking,
+										partial: output,
+									});
+								}
+								currentBlock = null;
+							}
+							applyServerToolPart(output.content, part, (contentIndex, block) =>
+								stream.push({ type: "servertooluse", contentIndex, block, partial: output }),
+							);
+						}
 					}
 				}
 
@@ -255,6 +293,10 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 							total: 0,
 						},
 					};
+					if (webSearchQueryCount > 0) {
+						output.usage.extras = { webSearch: webSearchQueryCount };
+						output.usage.cost.extras = { webSearch: webSearchQueryCount * GOOGLE_SEARCH_GROUNDING_COST };
+					}
 					calculateCost(model, output.usage);
 				}
 			}
@@ -482,16 +524,26 @@ function buildParams(
 			? resolveGoogleFunctionCallingMode(currentTools, options.toolChoice, supportsStrictMode)
 			: undefined;
 	const systemInstruction = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
+	const tools: NonNullable<GenerateContentConfig["tools"]> = [];
+	if (currentTools.length > 0) {
+		const functionTools = convertTools(currentTools, false, supportsStrictMode);
+		if (functionTools) tools.push(...functionTools);
+	}
+	const googleSearch = convertGoogleSearchTool(options.nativeTools?.webSearch);
+	if (googleSearch) tools.push(googleSearch);
+
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
 		...(systemInstruction && { systemInstruction: sanitizeSurrogates(systemInstruction) }),
-		...(currentTools.length > 0 && {
-			tools: convertTools(currentTools, false, supportsStrictMode),
-		}),
-		...(functionCallingMode !== undefined && {
-			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
-		}),
+		...(tools.length > 0 && { tools }),
 	};
+
+	config.toolConfig = buildGoogleToolConfig({
+		functionCallingMode,
+		hasFunctionTools: currentTools.length > 0,
+		hasBuiltInTool: !!googleSearch,
+		toolChoice: options.toolChoice,
+	});
 
 	if (options.thinking?.enabled && model.reasoning) {
 		const thinkingConfig: ThinkingConfig = { includeThoughts: true };

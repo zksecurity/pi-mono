@@ -134,6 +134,68 @@ export interface ProviderResponse {
 	headers: Record<string, string>;
 }
 
+export interface NativeToolUserLocation {
+	type?: "approximate";
+	city?: string;
+	country?: string;
+	region?: string;
+	timezone?: string;
+}
+
+export interface NativeWebSearchOptions {
+	allowedDomains?: string[];
+	blockedDomains?: string[];
+	maxUses?: number;
+	searchContextSize?: "low" | "medium" | "high";
+	userLocation?: NativeToolUserLocation;
+	/**
+	 * xAI (Grok) only: let the model inspect images it encounters while browsing.
+	 * Ignored by providers that don't support it.
+	 */
+	enableImageUnderstanding?: boolean;
+	/**
+	 * xAI (Grok) only: let the model search for images and embed them in the
+	 * response as Markdown. Ignored by providers that don't support it.
+	 */
+	enableImageSearch?: boolean;
+}
+
+export interface NativeToolsOptions {
+	webSearch?: boolean | NativeWebSearchOptions;
+}
+
+/**
+ * Returns the canonical tool names that provider-native tools occupy on the
+ * wire. These names are reserved: a client-side tool with the same name would
+ * collide when both are sent to the provider.
+ */
+export function getReservedNativeToolNames(nativeTools: NativeToolsOptions | undefined): string[] {
+	if (!nativeTools) return [];
+	const names: string[] = [];
+	if (nativeTools.webSearch) names.push("web_search");
+	return names;
+}
+
+/**
+ * Throws if any client tool name collides with a provider-native tool name.
+ * Call at config/session construction time so misconfiguration surfaces early.
+ */
+export function assertNoNativeToolNameCollision(
+	clientToolNames: readonly string[],
+	nativeTools: NativeToolsOptions | undefined,
+): void {
+	const reserved = new Set(getReservedNativeToolNames(nativeTools));
+	if (reserved.size === 0) return;
+	const conflicts = clientToolNames.filter((name) => reserved.has(name));
+	if (conflicts.length === 0) return;
+	const plural = conflicts.length > 1;
+	const list = conflicts.map((n) => `"${n}"`).join(", ");
+	throw new Error(
+		`Tool name${plural ? "s" : ""} ${list} ${plural ? "collide" : "collides"} with provider-native tool name${plural ? "s" : ""}. ` +
+			`Rename the client tool${plural ? "s" : ""} or disable the conflicting native tool.`,
+	);
+}
+
 /** Authentication, HTTP transport, and lifecycle callbacks shared by provider requests. */
 export interface ProviderRequestOptions<TModel = Model<Api>> {
 	signal?: AbortSignal;
@@ -240,6 +302,11 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * For example, Anthropic uses `user_id` for abuse tracking and rate limiting.
 	 */
 	metadata?: Record<string, unknown>;
+	/**
+	 * Provider-native built-in tools (for example, hosted web search).
+	 * Providers ignore tools they don't support.
+	 */
+	nativeTools?: NativeToolsOptions;
 }
 
 export type ProviderStreamOptions = StreamOptions & Record<string, unknown>;
@@ -430,6 +497,52 @@ export interface ToolCall {
 	namespace?: string;
 }
 
+/**
+ * A provider-executed (server-side) built-in tool invocation, e.g. Gemini's
+ * `google_search` grounding or Anthropic's `web_search`.
+ *
+ * Unlike `ToolCall`, the provider runs the tool itself and returns both the call
+ * and its result inline within the model's turn. Both providers validate the
+ * assistant turn they get handed back, so these blocks must be replayed verbatim
+ * on every subsequent turn:
+ *
+ * - Gemini's "tool context circulation" (enabled via
+ *   `tool_config.include_server_side_tool_invocations`) requires the call/response
+ *   parts together with their thought signatures.
+ * - Anthropic requires the `server_tool_use` / `*_tool_result` block pair. Dropping
+ *   it can leave two `thinking` blocks adjacent, which the Messages API rejects with
+ *   "`thinking` or `redacted_thinking` blocks in the latest assistant message cannot
+ *   be modified".
+ *
+ * We therefore capture each call/response pair so the originating provider can
+ * round-trip it. Other providers ignore these blocks.
+ *
+ * See: https://ai.google.dev/gemini-api/docs/tool-combination
+ * See: https://docs.claude.com/en/docs/agents-and-tools/tool-use/web-search-tool
+ */
+export interface ServerToolUse {
+	type: "serverToolUse";
+	/** Unique id linking the server-side call to its response. */
+	id?: string;
+	/** Provider tool identifier, e.g. "GOOGLE_SEARCH_WEB" (Gemini) or "web_search" (Anthropic). */
+	toolType?: string;
+	/** Arguments from the server-side call (e.g. search queries). */
+	args?: Record<string, any>;
+	/**
+	 * Result of the server-side call. Gemini stores its `toolResponse.response`
+	 * object; Anthropic stores the entire raw result block (`web_search_tool_result`
+	 * and friends, including `type` and `tool_use_id`) so it can be echoed back
+	 * unmodified.
+	 */
+	response?: Record<string, any>;
+	/** thoughtSignature attached to the toolCall part (Gemini). */
+	callSignature?: string;
+	/** thoughtSignature attached to the toolResponse part (Gemini). */
+	responseSignature?: string;
+	/** Anthropic's `caller` field on the `server_tool_use` block, echoed back verbatim. */
+	caller?: unknown;
+}
+
 export interface Usage {
 	input: number;
 	output: number;
@@ -444,12 +557,14 @@ export interface Usage {
 	 */
 	reasoning?: number;
 	totalTokens: number;
+	extras?: Record<string, number>;
 	cost: {
 		input: number;
 		output: number;
 		cacheRead: number;
 		cacheWrite: number;
 		total: number;
+		extras?: Record<string, number>;
 	};
 }
 
@@ -551,7 +666,7 @@ export interface UserMessage {
 
 export interface AssistantMessage {
 	role: "assistant";
-	content: (TextContent | ThinkingContent | ToolCall)[];
+	content: (TextContent | ThinkingContent | ToolCall | ServerToolUse)[];
 	api: Api;
 	provider: ProviderId;
 	model: string;
@@ -796,6 +911,16 @@ export type AssistantMessageEvent =
 	| { type: "toolcall_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "toolcall_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
 	| { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage }
+	/**
+	 * A provider-executed built-in tool block landed in `content`. Emitted whole rather
+	 * than as start/delta/end because the provider runs the tool itself and there is no
+	 * client-side work to stream. May fire twice for the same `contentIndex`: once when
+	 * the call is complete and again when its result arrives; the block is authoritative
+	 * each time. Consumers that replay content by index must honor it, or the slot is
+	 * left as a hole and the block is lost — see `ServerToolUse` for why losing it breaks
+	 * the next request.
+	 */
+	| { type: "servertooluse"; contentIndex: number; block: ServerToolUse; partial: AssistantMessage }
 	| {
 			type: "done";
 			reason: Extract<StopReason, "stop" | "length" | "toolUse" | "deferred">;

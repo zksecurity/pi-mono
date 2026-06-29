@@ -19,6 +19,7 @@ import type {
 	AssistantMessage,
 	ImageContent,
 	Model,
+	NativeWebSearchOptions,
 	StopReason,
 	StreamOptions,
 	SystemMessage,
@@ -136,6 +137,13 @@ export interface ConvertResponsesToolsOptions {
 	supportsStrictMode?: boolean;
 	supportsOpenAIGrammarTools?: boolean;
 	toolSearchResult?: boolean;
+	nativeWebSearch?: boolean | NativeWebSearchOptions;
+	/**
+	 * Provider id, used to select provider-specific web-search semantics. xAI's
+	 * Responses API extends the OpenAI `web_search` tool with `excluded_domains`
+	 * and image options; OpenAI itself supports neither.
+	 */
+	provider?: string;
 }
 
 // =============================================================================
@@ -357,12 +365,70 @@ export function convertResponsesMessages<TApi extends Api>(
 // Tool conversion
 // =============================================================================
 
-export function convertResponsesTools(tools: readonly Tool[], options?: ConvertResponsesToolsOptions): OpenAITool[] {
+function normalizeNativeWebSearch(
+	webSearch: boolean | NativeWebSearchOptions | undefined,
+): NativeWebSearchOptions | undefined {
+	if (!webSearch) return undefined;
+	return webSearch === true ? {} : webSearch;
+}
+
+// xAI's /v1/responses extends the OpenAI `web_search` tool with fields the OpenAI
+// SDK types don't model (excluded_domains, image options), so widen locally.
+type XaiWebSearchTool = OpenAITool & {
+	filters?: { allowed_domains?: string[]; excluded_domains?: string[] };
+	enable_image_understanding?: boolean;
+	enable_image_search?: boolean;
+};
+
+function convertOpenAIWebSearchTool(
+	webSearch: boolean | NativeWebSearchOptions | undefined,
+	provider?: string,
+): OpenAITool | undefined {
+	const config = normalizeNativeWebSearch(webSearch);
+	if (!config) return undefined;
+	if (config.allowedDomains?.length && config.blockedDomains?.length) {
+		throw new Error("web search supports allowedDomains or blockedDomains, not both.");
+	}
+
+	// xAI supports domain exclusion and image options; plain OpenAI does not.
+	if (provider === "xai") {
+		const tool: XaiWebSearchTool = { type: "web_search" };
+		if (config.allowedDomains?.length) {
+			tool.filters = { allowed_domains: config.allowedDomains };
+		} else if (config.blockedDomains?.length) {
+			tool.filters = { excluded_domains: config.blockedDomains };
+		}
+		if (config.enableImageUnderstanding) tool.enable_image_understanding = true;
+		if (config.enableImageSearch) tool.enable_image_search = true;
+		return tool;
+	}
+
+	if (config.blockedDomains?.length) {
+		throw new Error("OpenAI web search does not support blockedDomains. Use allowedDomains instead.");
+	}
+	const tool: OpenAITool = { type: "web_search" };
+	if (config.allowedDomains?.length) tool.filters = { allowed_domains: config.allowedDomains };
+	if (config.searchContextSize) tool.search_context_size = config.searchContextSize;
+	if (config.userLocation) {
+		tool.user_location = {
+			type: config.userLocation.type ?? "approximate",
+			city: config.userLocation.city,
+			country: config.userLocation.country,
+			region: config.userLocation.region,
+			timezone: config.userLocation.timezone,
+		};
+	}
+	return tool;
+}
+
+export function convertResponsesTools(
+	tools: readonly Tool[] | undefined,
+	options?: ConvertResponsesToolsOptions,
+): OpenAITool[] {
 	const defaultStrict = options?.strict === undefined ? false : options.strict;
 	const supportsStrictMode = options?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = options?.supportsOpenAIGrammarTools ?? false;
-
-	return tools.map((tool) => {
+	const output = (tools ?? []).map((tool): OpenAITool => {
 		const grammar = resolveGrammarConstrainedSampling(tool, supportsOpenAIGrammarTools);
 		if (grammar) {
 			return {
@@ -377,7 +443,6 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 				...(options?.toolSearchResult ? { defer_loading: true } : {}),
 			} satisfies OpenAITool;
 		}
-
 		const constrainedStrict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
 		const strict = constrainedStrict ?? defaultStrict;
 		const functionTool: Omit<Extract<OpenAITool, { type: "function" }>, "strict"> & {
@@ -394,6 +459,9 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 		}
 		return functionTool as OpenAITool;
 	});
+	const webSearchTool = convertOpenAIWebSearchTool(options?.nativeWebSearch, options?.provider);
+	if (webSearchTool) output.push(webSearchTool);
+	return output;
 }
 
 // =============================================================================
@@ -430,6 +498,46 @@ type ResponsesOutputSlot =
 
 type ToolCallOutputSlot = Extract<ResponsesOutputSlot, { type: "toolCall" }>;
 
+/**
+ * Flat USD cost per native web-search query, keyed by provider. Providers bill
+ * the server-side `web_search` tool per search, on top of tokens:
+ *   - OpenAI:    ~$0.01/call (default)
+ *   - xAI:       $5 / 1,000 calls   (https://docs.x.ai/developers/pricing)
+ *   - Meta Muse: $2.50 / 1,000 search queries (dev.meta.ai pricing)
+ */
+function webSearchUnitCost(provider: string): number {
+	switch (provider) {
+		case "xai":
+			return 0.005;
+		case "meta":
+			return 0.0025;
+		default:
+			return 0.01;
+	}
+}
+
+type WebSearchCallItem = { type?: string; action?: { type?: string } };
+
+/**
+ * Count billable web searches and their cost. Only `search` actions are billed
+ * as queries; `open_page`/`find` sub-actions (Meta browses pages as separate
+ * `web_search_call` items) are not. Items with no action type fall through and
+ * count, preserving behavior for providers that don't expose one. Accepts the
+ * raw response output (loosely typed since the SDK models each item variant).
+ */
+export function computeWebSearchCost(
+	output: readonly unknown[] | undefined,
+	provider: string,
+): { count: number; cost: number } {
+	const count = (output ?? []).filter((raw) => {
+		const item = raw as WebSearchCallItem;
+		if (item.type !== "web_search_call") return false;
+		const actionType = item.action?.type;
+		return actionType === undefined || actionType === "search";
+	}).length;
+	return { count, cost: count * webSearchUnitCost(provider) };
+}
+
 export async function processResponsesStream<TApi extends Api>(
 	openaiStream: AsyncIterable<ResponseStreamEvent>,
 	output: AssistantMessage,
@@ -440,6 +548,11 @@ export async function processResponsesStream<TApi extends Api>(
 	let sawTerminalResponseEvent = false;
 	const outputSlots = new Map<number, ResponsesOutputSlot>();
 	const reasoningBlocksById = new Map<string, ThinkingContent>();
+	// The Codex backend streams web_search_call output items but sends `output: []`
+	// on the terminal response event, so counting searches from the terminal output
+	// alone reads zero there. Track the streamed items (done overwrites added, since
+	// only done carries the final action) as the fallback count source.
+	const streamedWebSearchCalls = new Map<number, unknown>();
 	const applyMessagePhaseStopReason = (item: ResponseOutputItem): void => {
 		if (item.type === "message" && item.phase === "final_answer") {
 			output.stopReason = "stop";
@@ -574,6 +687,14 @@ export async function processResponsesStream<TApi extends Api>(
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			};
 		}
+		let webSearch = computeWebSearchCost(response?.output, model.provider);
+		if (webSearch.count === 0 && streamedWebSearchCalls.size > 0) {
+			webSearch = computeWebSearchCost([...streamedWebSearchCalls.values()], model.provider);
+		}
+		if (webSearch.count > 0) {
+			output.usage.extras = { webSearch: webSearch.count };
+			output.usage.cost.extras = { webSearch: webSearch.cost };
+		}
 		calculateCost(model, output.usage);
 		if (options?.applyServiceTierPricing) {
 			const serviceTier = options.resolveServiceTier
@@ -601,6 +722,9 @@ export async function processResponsesStream<TApi extends Api>(
 		if (event.type === "response.created") {
 			output.responseId = event.response.id;
 		} else if (event.type === "response.output_item.added") {
+			if (event.item.type === "web_search_call") {
+				streamedWebSearchCalls.set(event.output_index, event.item);
+			}
 			createSlot(event.output_index, event.item);
 		} else if (event.type === "response.reasoning_summary_text.delta") {
 			const slot = getSlot(event.output_index, "thinking");
@@ -682,6 +806,9 @@ export async function processResponsesStream<TApi extends Api>(
 			pushToolCallDelta(slot, appendCustomToolCallInput(slot.block, event.input, true));
 		} else if (event.type === "response.output_item.done") {
 			const item = event.item;
+			if (item.type === "web_search_call") {
+				streamedWebSearchCalls.set(event.output_index, item);
+			}
 			applyMessagePhaseStopReason(item);
 			const slot = getOrCreateSlot(event.output_index, item);
 
