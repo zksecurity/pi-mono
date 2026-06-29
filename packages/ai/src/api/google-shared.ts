@@ -2,8 +2,8 @@
  * Shared utilities for Google Generative AI and Google Vertex providers.
  */
 
-import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
-import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.ts";
+import { type Content, FinishReason, FunctionCallingConfigMode, type GoogleSearch, type Part } from "@google/genai";
+import type { Context, ImageContent, Model, NativeWebSearchOptions, StopReason, TextContent, Tool } from "../types.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -292,6 +292,22 @@ export function convertTools(
 export function supportsGoogleStrictToolSampling(modelId: string): boolean {
 	const majorVersion = getGeminiMajorVersion(modelId);
 	return majorVersion !== undefined && majorVersion >= 3;
+}
+
+/** Convert pi's native web search option into a Gemini googleSearch tool. */
+export function convertGoogleSearchTool(
+	webSearch: boolean | NativeWebSearchOptions | undefined,
+): { googleSearch: GoogleSearch } | undefined {
+	if (!webSearch) return undefined;
+	const config: NativeWebSearchOptions = webSearch === true ? {} : webSearch;
+	if (config.allowedDomains?.length) {
+		throw new Error(
+			"Gemini google_search does not support allowedDomains. Use blockedDomains (Vertex only) or omit.",
+		);
+	}
+	const googleSearch: GoogleSearch = {};
+	if (config.blockedDomains?.length) googleSearch.excludeDomains = config.blockedDomains;
+	return { googleSearch };
 }
 
 /** Map tool choice string to Gemini FunctionCallingConfigMode. */
