@@ -822,6 +822,10 @@ function toChatMessages(messages: Message[], supportsImages: boolean): MistralCh
 					}
 					continue;
 				}
+				if (block.type === "serverToolUse") {
+					// Gemini-specific server-executed tool record; not representable for Mistral.
+					continue;
+				}
 				toolCalls.push({
 					id: block.id,
 					type: "function",
