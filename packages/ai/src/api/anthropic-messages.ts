@@ -17,6 +17,7 @@ import type {
 	ImageContent,
 	Message,
 	Model,
+	NativeWebSearchOptions,
 	ProviderEnv,
 	ProviderHeaders,
 	SimpleStreamOptions,
@@ -607,6 +608,11 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
+					const wsCount = event.message.usage.server_tool_use?.web_search_requests ?? 0;
+					if (wsCount > 0) {
+						output.usage.extras = { webSearch: wsCount };
+						output.usage.cost.extras = { webSearch: wsCount * 0.01 };
+					}
 					calculateCost(usageModel, output.usage);
 				} else if (event.type === "content_block_start") {
 					if (event.content_block.type === "text") {
@@ -764,6 +770,13 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
+					const wsCount =
+						(event.usage as { server_tool_use?: { web_search_requests?: number } }).server_tool_use
+							?.web_search_requests ?? 0;
+					if (wsCount > 0) {
+						output.usage.extras = { webSearch: wsCount };
+						output.usage.cost.extras = { webSearch: wsCount * 0.01 };
+					}
 					calculateCost(usageModel, output.usage);
 				}
 			}
@@ -1038,8 +1051,9 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
+	const tools: Anthropic.Messages.ToolUnion[] = [];
 	if (immediateTools.length > 0 || deferredTools.length > 0) {
-		params.tools = [
+		tools.push(
 			...convertTools(
 				immediateTools,
 				isOAuthToken,
@@ -1055,7 +1069,14 @@ function buildParams(
 				undefined,
 				true,
 			),
-		];
+		);
+	}
+	const nativeWebSearchTool = convertAnthropicWebSearchTool(options?.nativeTools?.webSearch);
+	if (nativeWebSearchTool) {
+		tools.push(nativeWebSearchTool);
+	}
+	if (tools.length > 0) {
+		params.tools = tools;
 	}
 
 	// Configure thinking mode: adaptive, budget-based, or explicitly disabled.
@@ -1360,6 +1381,42 @@ function convertTools(
 			...(cacheControl && index === tools.length - 1 ? { cache_control: cacheControl } : {}),
 		};
 	});
+}
+
+function normalizeNativeWebSearch(
+	webSearch: boolean | NativeWebSearchOptions | undefined,
+): NativeWebSearchOptions | undefined {
+	if (!webSearch) return undefined;
+	if (webSearch === true) return {};
+	return webSearch;
+}
+
+function convertAnthropicWebSearchTool(
+	webSearch: boolean | NativeWebSearchOptions | undefined,
+): Anthropic.Messages.WebSearchTool20250305 | undefined {
+	const config = normalizeNativeWebSearch(webSearch);
+	if (!config) return undefined;
+
+	if (config.allowedDomains?.length && config.blockedDomains?.length) {
+		throw new Error("Anthropic web search supports allowedDomains or blockedDomains, not both.");
+	}
+
+	return {
+		name: "web_search",
+		type: "web_search_20250305",
+		allowed_domains: config.allowedDomains,
+		blocked_domains: config.blockedDomains,
+		max_uses: config.maxUses,
+		user_location: config.userLocation
+			? {
+					type: config.userLocation.type ?? "approximate",
+					city: config.userLocation.city,
+					country: config.userLocation.country,
+					region: config.userLocation.region,
+					timezone: config.userLocation.timezone,
+				}
+			: undefined,
+	};
 }
 
 function mapStopReason(
