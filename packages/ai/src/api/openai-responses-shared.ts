@@ -19,6 +19,7 @@ import type {
 	AssistantMessage,
 	ImageContent,
 	Model,
+	NativeWebSearchOptions,
 	StopReason,
 	SystemMessage,
 	TextContent,
@@ -134,6 +135,7 @@ export interface ConvertResponsesToolsOptions {
 	supportsStrictMode?: boolean;
 	supportsOpenAIGrammarTools?: boolean;
 	toolSearchResult?: boolean;
+	nativeWebSearch?: boolean | NativeWebSearchOptions;
 }
 
 // =============================================================================
@@ -356,12 +358,45 @@ export function convertResponsesMessages<TApi extends Api>(
 // Tool conversion
 // =============================================================================
 
-export function convertResponsesTools(tools: readonly Tool[], options?: ConvertResponsesToolsOptions): OpenAITool[] {
+function normalizeNativeWebSearch(
+	webSearch: boolean | NativeWebSearchOptions | undefined,
+): NativeWebSearchOptions | undefined {
+	if (!webSearch) return undefined;
+	return webSearch === true ? {} : webSearch;
+}
+
+function convertOpenAIWebSearchTool(webSearch: boolean | NativeWebSearchOptions | undefined): OpenAITool | undefined {
+	const config = normalizeNativeWebSearch(webSearch);
+	if (!config) return undefined;
+	if (config.allowedDomains?.length && config.blockedDomains?.length) {
+		throw new Error("OpenAI web search supports allowedDomains or blockedDomains, not both.");
+	}
+	if (config.blockedDomains?.length) {
+		throw new Error("OpenAI web search does not support blockedDomains. Use allowedDomains instead.");
+	}
+	const tool: OpenAITool = { type: "web_search" };
+	if (config.allowedDomains?.length) tool.filters = { allowed_domains: config.allowedDomains };
+	if (config.searchContextSize) tool.search_context_size = config.searchContextSize;
+	if (config.userLocation) {
+		tool.user_location = {
+			type: config.userLocation.type ?? "approximate",
+			city: config.userLocation.city,
+			country: config.userLocation.country,
+			region: config.userLocation.region,
+			timezone: config.userLocation.timezone,
+		};
+	}
+	return tool;
+}
+
+export function convertResponsesTools(
+	tools: readonly Tool[] | undefined,
+	options?: ConvertResponsesToolsOptions,
+): OpenAITool[] {
 	const defaultStrict = options?.strict === undefined ? false : options.strict;
 	const supportsStrictMode = options?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = options?.supportsOpenAIGrammarTools ?? false;
-
-	return tools.map((tool) => {
+	const output = (tools ?? []).map((tool): OpenAITool => {
 		const grammar = resolveGrammarConstrainedSampling(tool, supportsOpenAIGrammarTools);
 		if (grammar) {
 			return {
@@ -376,7 +411,6 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 				...(options?.toolSearchResult ? { defer_loading: true } : {}),
 			} satisfies OpenAITool;
 		}
-
 		const constrainedStrict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
 		const strict = constrainedStrict ?? defaultStrict;
 		const functionTool: Omit<Extract<OpenAITool, { type: "function" }>, "strict"> & {
@@ -393,6 +427,9 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 		}
 		return functionTool as OpenAITool;
 	});
+	const webSearchTool = convertOpenAIWebSearchTool(options?.nativeWebSearch);
+	if (webSearchTool) output.push(webSearchTool);
+	return output;
 }
 
 // =============================================================================
@@ -572,6 +609,11 @@ export async function processResponsesStream<TApi extends Api>(
 				totalTokens: response.usage.total_tokens || 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			};
+		}
+		const wsCount = response?.output?.filter((item: any) => item.type === "web_search_call").length ?? 0;
+		if (wsCount > 0) {
+			output.usage.extras = { webSearch: wsCount };
+			output.usage.cost.extras = { webSearch: wsCount * 0.01 };
 		}
 		calculateCost(model, output.usage);
 		if (options?.applyServiceTierPricing) {

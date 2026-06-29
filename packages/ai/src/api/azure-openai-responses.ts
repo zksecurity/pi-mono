@@ -297,6 +297,8 @@ function buildParams(
 			supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		},
 	});
+	type ResponseInclude = NonNullable<ResponseCreateParamsStreaming["include"]>[number];
+	const include = new Set<ResponseInclude>();
 
 	const params: ResponseCreateParamsStreaming = {
 		model: deploymentName,
@@ -314,11 +316,17 @@ function buildParams(
 		params.temperature = options?.temperature;
 	}
 
-	if (transcriptTools.requestTools.length > 0) {
-		params.tools = convertResponsesTools(transcriptTools.requestTools, {
-			supportsStrictMode: model.compat?.supportsStrictMode ?? true,
-			supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
-		});
+	const convertedTools = convertResponsesTools(transcriptTools.requestTools, {
+		supportsStrictMode: model.compat?.supportsStrictMode ?? true,
+		supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
+		nativeWebSearch: options?.nativeTools?.webSearch,
+	});
+	if (convertedTools.length > 0) {
+		params.tools = convertedTools;
+	}
+	if (options?.nativeTools?.webSearch) {
+		include.add("web_search_call.action.sources");
+		include.add("web_search_call.results");
 	}
 	if (options?.toolChoice !== undefined) {
 		params.tool_choice = options.toolChoice;
@@ -333,12 +341,16 @@ function buildParams(
 				effort: effort as NonNullable<typeof params.reasoning>["effort"],
 				summary: options?.reasoningSummary || "auto",
 			};
-			params.include = ["reasoning.encrypted_content"];
+			include.add("reasoning.encrypted_content");
 		} else if (model.thinkingLevelMap?.off !== null) {
 			params.reasoning = {
 				effort: (model.thinkingLevelMap?.off ?? "none") as NonNullable<typeof params.reasoning>["effort"],
 			};
 		}
+	}
+
+	if (include.size > 0) {
+		params.include = [...include];
 	}
 
 	// Last so custom keys override the named request fields.

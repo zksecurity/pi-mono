@@ -6,6 +6,7 @@ import {
 	type Content,
 	FinishReason,
 	FunctionCallingConfigMode,
+	type GoogleSearch,
 	ThinkingLevel as GoogleSdkThinkingLevel,
 	type Part,
 	type ThinkingConfig,
@@ -14,6 +15,7 @@ import { clampThinkingLevel } from "../models.ts";
 import type {
 	ImageContent,
 	Model,
+	NativeWebSearchOptions,
 	StopReason,
 	StreamOptions,
 	TextContent,
@@ -404,6 +406,22 @@ export function convertTools(
 export function supportsGoogleStrictToolSampling(modelId: string): boolean {
 	const majorVersion = getGeminiMajorVersion(modelId);
 	return majorVersion !== undefined && majorVersion >= 3;
+}
+
+/** Convert pi's native web search option into a Gemini googleSearch tool. */
+export function convertGoogleSearchTool(
+	webSearch: boolean | NativeWebSearchOptions | undefined,
+): { googleSearch: GoogleSearch } | undefined {
+	if (!webSearch) return undefined;
+	const config: NativeWebSearchOptions = webSearch === true ? {} : webSearch;
+	if (config.allowedDomains?.length) {
+		throw new Error(
+			"Gemini google_search does not support allowedDomains. Use blockedDomains (Vertex only) or omit.",
+		);
+	}
+	const googleSearch: GoogleSearch = {};
+	if (config.blockedDomains?.length) googleSearch.excludeDomains = config.blockedDomains;
+	return { googleSearch };
 }
 
 /** Map tool choice string to Gemini FunctionCallingConfigMode. */
