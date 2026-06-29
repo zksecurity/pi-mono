@@ -64,6 +64,18 @@ If rebase conflicts occur:
 - If a conflict is in a file you did not modify, abort and ask the user.
 - Never force push.
 
+## Fork Maintenance (zkao)
+
+This repo is a fork. `zkao` is our long-lived working branch; `main` tracks upstream releases. We periodically rebase `zkao` onto `main`.
+
+Before every rebase of `zkao`:
+
+- Create a backup branch named `zkao-v<version>-backup`, where `<version>` is the upstream release `zkao` is currently synced to (see the latest `Merge upstream/main into zkao (sync to vX.Y.Z)` commit), not the rebase target.
+- Record the backup branch in the README "zkao backups" table (branch name, synced version, date, what it preserved).
+- Confirm uncommitted/untracked work is committed first; a backup branch only captures committed state.
+
+Keep these backup branches around (do not delete them); they are our recovery point if a rebase goes wrong.
+
 ## Issues and PRs
 
 See `CONTRIBUTING.md` for the contributor gate (auto-close workflows, `lgtm`/`lgtmi`, quality bar).
@@ -160,3 +172,23 @@ Attribution:
 ## User Override
 
 If the user's instructions conflict with any rule in this document, ask for explicit confirmation before overriding. Only then execute their instructions.
+
+## Releasing a zkao Fork Version
+
+A zkao release rebases our commits onto a newer upstream **release tag** and tags the result `vX.Y.Z.zkao`. It does **not** bump versions or publish to npm: the `.zkao` tag inherits the upstream `vX.Y.Z` package versions, and pushing it triggers `.github/workflows/zkao.yml`, which builds, packs each package's tarball, and creates the GitHub release with those `.tgz` assets. (The upstream "Build Binaries" workflow also fires on the tag and harmlessly fails — ignore it.)
+
+Let `OLD` = the upstream release `zkao` is currently synced to (latest `docs: record zkao-vX-backup row` / the `vOLD.zkao` tag at HEAD), `NEW` = the upstream release tag to move to (`git tag --sort=-version:refname | grep -v zkao | head`).
+
+1. **Backup** (see [Fork Maintenance](#fork-maintenance-zkao)): from a clean tree, `git branch zkao-vOLD-backup zkao && git push origin zkao-vOLD-backup`.
+2. **Rebase** our commits onto the new release: `git fetch upstream --tags` then `git rebase --onto vNEW vOLD zkao`. Resolve conflicts only in files we modified; **drop** any of our commits upstream has since absorbed (e.g. a cherry-pick now in the release) — `git rebase --onto <dropped>^ <dropped> zkao`.
+3. **Verify**: `npm install --ignore-scripts && npm run build && npm run check`, then run the AI tests (`cd packages/ai && npx vitest run`). The build regenerates `*.generated.ts` from live APIs and `npm install` may touch `package-lock.json`; `git checkout -- <those>` before tagging so the tag matches the upstream `vNEW` tree.
+4. **Record the backup**: add a `zkao-vOLD-backup` row to the README table (synced version, today's date, what the rebase dropped/re-resolved) and commit `docs: record zkao-vOLD-backup row`.
+5. **Tag and push** (lightweight tag, matching prior `.zkao` tags):
+   ```bash
+   git tag vNEW.zkao zkao
+   git push origin vNEW^{commit}:refs/heads/main   # sync main (fast-forward to the release)
+   git push --force-with-lease origin zkao         # rebased history
+   git push origin vNEW.zkao                        # triggers the release workflow
+   git branch -f main vNEW^{commit}                 # keep local main in sync
+   ```
+6. **Confirm**: `gh run watch <id> --repo zksecurity/pi-mono --exit-status` on the "zkao Release" run, then `gh release view vNEW.zkao --repo zksecurity/pi-mono` shows a non-draft release with all four `*.tgz` assets.
