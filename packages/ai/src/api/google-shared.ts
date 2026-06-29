@@ -7,18 +7,25 @@ import {
 	FinishReason,
 	FunctionCallingConfigMode,
 	ThinkingLevel as GoogleSdkThinkingLevel,
+	type GoogleSearch,
 	type Part,
 	type ThinkingConfig,
+	type ToolConfig,
+	type ToolType,
 } from "@google/genai";
 import { clampThinkingLevel } from "../models.ts";
 import type {
 	ImageContent,
 	Model,
+	NativeWebSearchOptions,
+	ServerToolUse,
 	StopReason,
 	StreamOptions,
 	TextContent,
+	ThinkingContent,
 	ThinkingLevel,
 	Tool,
+	ToolCall,
 	TranscriptContext,
 } from "../types.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -273,6 +280,33 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 						...(thoughtSignature && { thoughtSignature }),
 					};
 					parts.push(part);
+				} else if (block.type === "serverToolUse") {
+					// Provider-executed built-in tool (e.g. google_search). These records are
+					// Gemini-internal and only meaningful when replayed to the same model, where
+					// tool-context-circulation requires the call/response parts (with their thought
+					// signatures) on every subsequent turn. Drop them for other providers/models.
+					if (!isSameProviderAndModel) continue;
+					const callSignature = resolveThoughtSignature(true, block.callSignature);
+					const responseSignature = resolveThoughtSignature(true, block.responseSignature);
+					const toolType = block.toolType as ToolType | undefined;
+					if (block.id || toolType || block.args || callSignature) {
+						parts.push({
+							toolCall: {
+								...(block.id ? { id: block.id } : {}),
+								...(toolType ? { toolType } : {}),
+								args: block.args ?? {},
+							},
+							...(callSignature && { thoughtSignature: callSignature }),
+						});
+					}
+					parts.push({
+						toolResponse: {
+							...(block.id ? { id: block.id } : {}),
+							...(toolType ? { toolType } : {}),
+							response: block.response ?? {},
+						},
+						...(responseSignature && { thoughtSignature: responseSignature }),
+					});
 				}
 			}
 
@@ -406,7 +440,118 @@ export function supportsGoogleStrictToolSampling(modelId: string): boolean {
 	return majorVersion !== undefined && majorVersion >= 3;
 }
 
-/** Map tool choice string to Gemini FunctionCallingConfigMode. */
+/** Convert pi's native web search option into a Gemini googleSearch tool. */
+export function convertGoogleSearchTool(
+	webSearch: boolean | NativeWebSearchOptions | undefined,
+): { googleSearch: GoogleSearch } | undefined {
+	if (!webSearch) return undefined;
+	const config: NativeWebSearchOptions = webSearch === true ? {} : webSearch;
+	if (config.allowedDomains?.length) {
+		throw new Error(
+			"Gemini google_search does not support allowedDomains. Use blockedDomains (Vertex only) or omit.",
+		);
+	}
+	const googleSearch: GoogleSearch = {};
+	if (config.blockedDomains?.length) googleSearch.excludeDomains = config.blockedDomains;
+	return { googleSearch };
+}
+
+/**
+ * Apply a streamed server-side built-in tool part (Gemini `toolCall` / `toolResponse`)
+ * to the assistant content array. Call and response parts are paired into a single
+ * `ServerToolUse` block (by id when present, otherwise the most recent block awaiting a
+ * response) so the pair can be replayed verbatim on later turns. Returns true when the
+ * part was a server-side tool part and has been consumed.
+ *
+ * `onBlock` reports the content index the block landed at, so callers can emit the
+ * `servertooluse` event. It fires for both halves of the pair (same index each time).
+ * Skipping it leaves consumers that rebuild content from events with a hole at that
+ * index, silently losing the block.
+ *
+ * See https://ai.google.dev/gemini-api/docs/tool-combination — these parts, and their
+ * thought signatures, must be circulated back on every subsequent turn or the API errors.
+ */
+export function applyServerToolPart(
+	content: (TextContent | ThinkingContent | ToolCall | ServerToolUse)[],
+	part: Pick<Part, "toolCall" | "toolResponse" | "thoughtSignature">,
+	onBlock?: (contentIndex: number, block: ServerToolUse) => void,
+): boolean {
+	if (part.toolCall) {
+		const block: ServerToolUse = {
+			type: "serverToolUse",
+			...(part.toolCall.id && { id: part.toolCall.id }),
+			...(part.toolCall.toolType && { toolType: String(part.toolCall.toolType) }),
+			...(part.toolCall.args && { args: part.toolCall.args as Record<string, any> }),
+			...(part.thoughtSignature && { callSignature: part.thoughtSignature }),
+		};
+		content.push(block);
+		onBlock?.(content.length - 1, block);
+		return true;
+	}
+	if (part.toolResponse) {
+		const id = part.toolResponse.id;
+		let block: ServerToolUse | undefined;
+		let index = -1;
+		for (let i = content.length - 1; i >= 0; i--) {
+			const candidate = content[i];
+			if (candidate.type === "serverToolUse" && candidate.response === undefined && (!id || candidate.id === id)) {
+				block = candidate;
+				index = i;
+				break;
+			}
+		}
+		if (!block) {
+			block = { type: "serverToolUse", ...(id ? { id } : {}) };
+			content.push(block);
+			index = content.length - 1;
+		}
+		if (part.toolResponse.toolType && !block.toolType) block.toolType = String(part.toolResponse.toolType);
+		if (part.toolResponse.response) block.response = part.toolResponse.response as Record<string, any>;
+		if (part.thoughtSignature) block.responseSignature = part.thoughtSignature;
+		onBlock?.(index, block);
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Build the Gemini `toolConfig`. When a server-side built-in tool (e.g. google_search) is
+ * combined with client function declarations, Google requires
+ * `includeServerSideToolInvocations: true`; in that mode AUTO function calling is
+ * unsupported, so we default to VALIDATED while honoring an explicit none/any toolChoice.
+ *
+ * Returns undefined when neither a function-calling mode nor server-side circulation is
+ * needed, matching the previous behavior of leaving `toolConfig` unset.
+ *
+ * See https://ai.google.dev/gemini-api/docs/tool-combination.
+ */
+export function buildGoogleToolConfig(opts: {
+	functionCallingMode?: FunctionCallingConfigMode;
+	hasFunctionTools: boolean;
+	hasBuiltInTool: boolean;
+	toolChoice?: string;
+}): ToolConfig | undefined {
+	const includeServerSide = opts.hasBuiltInTool;
+	let mode = opts.functionCallingMode;
+	if (mode === undefined && opts.hasFunctionTools && opts.toolChoice) {
+		mode = mapToolChoice(opts.toolChoice);
+	}
+	if (includeServerSide && opts.hasFunctionTools && (mode === undefined || mode === FunctionCallingConfigMode.AUTO)) {
+		mode = FunctionCallingConfigMode.VALIDATED;
+	}
+	const functionCallingConfig: { mode?: FunctionCallingConfigMode } = { mode };
+	const hasMode = mode !== undefined;
+	if (!includeServerSide && !hasMode) return undefined;
+
+	return {
+		...(hasMode && { functionCallingConfig }),
+		...(includeServerSide && { includeServerSideToolInvocations: true }),
+	};
+}
+
+/**
+ * Map tool choice string to Gemini FunctionCallingConfigMode.
+ */
 export function mapToolChoice(choice: string): FunctionCallingConfigMode {
 	switch (choice) {
 		case "auto":

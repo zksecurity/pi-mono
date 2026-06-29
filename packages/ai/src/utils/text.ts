@@ -1,6 +1,6 @@
-import type { ImageContent, SystemMessage, TextContent, ThinkingContent, ToolCall } from "../types.ts";
+import type { ImageContent, ServerToolUse, SystemMessage, TextContent, ThinkingContent, ToolCall } from "../types.ts";
 
-type Content = TextContent | ImageContent | ThinkingContent | ToolCall;
+type Content = TextContent | ImageContent | ThinkingContent | ToolCall | ServerToolUse;
 
 /** Extract and join text from message content. */
 export function contentText(content: string | readonly Content[], separator = "\n"): string {
