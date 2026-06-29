@@ -268,6 +268,7 @@ function buildParams(
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
 		},
 	});
+	type ResponseInclude = NonNullable<ResponseCreateParamsStreaming["include"]>[number];
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 	const disableImplicitPromptCache = cacheRetention === "none" && compat.supportsExplicitPromptCacheMode;
@@ -280,6 +281,7 @@ function buildParams(
 		prompt_cache_options: disableImplicitPromptCache ? { mode: "explicit" } : undefined,
 		store: false,
 	};
+	const include = new Set<ResponseInclude>();
 
 	if (options?.maxTokens) {
 		params.max_output_tokens = Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS);
@@ -293,11 +295,15 @@ function buildParams(
 		params.service_tier = options.serviceTier;
 	}
 
-	if (toolPlacement.immediate.length > 0) {
-		params.tools = convertResponsesTools(toolPlacement.immediate, {
-			supportsStrictMode: compat.supportsStrictMode,
-			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
-		});
+	const convertedTools = convertResponsesTools(toolPlacement.immediate, {
+		supportsStrictMode: compat.supportsStrictMode,
+		supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
+		nativeWebSearch: options?.nativeTools?.webSearch,
+	});
+	if (convertedTools.length > 0) params.tools = convertedTools;
+	if (options?.nativeTools?.webSearch) {
+		include.add("web_search_call.action.sources");
+		include.add("web_search_call.results");
 	}
 
 	if (options?.toolChoice !== undefined) {
@@ -313,13 +319,17 @@ function buildParams(
 				effort: effort as NonNullable<typeof params.reasoning>["effort"],
 				summary: options?.reasoningSummary || "auto",
 			};
-			params.include = ["reasoning.encrypted_content"];
+			include.add("reasoning.encrypted_content");
 		} else if (model.provider !== "github-copilot" && model.thinkingLevelMap?.off !== null) {
 			params.reasoning = {
 				effort: (model.thinkingLevelMap?.off ?? "none") as NonNullable<typeof params.reasoning>["effort"],
 			};
 		}
 		if (model.provider === "xai") params.include = ["reasoning.encrypted_content"];
+	}
+
+	if (include.size > 0) {
+		params.include = [...include];
 	}
 
 	return params;
