@@ -493,6 +493,11 @@ function buildRequestBody(
 		includeSystemPrompt: false,
 		deferredTools: toolPlacement.deferred,
 	});
+	const include = new Set<string>(["reasoning.encrypted_content"]);
+	if (options?.nativeTools?.webSearch) {
+		include.add("web_search_call.action.sources");
+		include.add("web_search_call.results");
+	}
 
 	const body: RequestBody = {
 		model: model.id,
@@ -501,7 +506,7 @@ function buildRequestBody(
 		instructions: context.systemPrompt || "You are a helpful assistant.",
 		input: messages,
 		text: { verbosity: options?.textVerbosity || "low" },
-		include: ["reasoning.encrypted_content"],
+		include: [...include],
 		prompt_cache_key: clampOpenAIPromptCacheKey(options?.sessionId),
 		tool_choice: options?.toolChoice ?? "auto",
 		parallel_tool_calls: true,
@@ -515,8 +520,12 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier;
 	}
 
-	if (toolPlacement.immediate.length > 0) {
-		body.tools = convertResponsesTools(toolPlacement.immediate, { strict: null });
+	const convertedTools = convertResponsesTools(toolPlacement.immediate, {
+		strict: null,
+		nativeWebSearch: options?.nativeTools?.webSearch,
+	});
+	if (convertedTools.length > 0) {
+		body.tools = convertedTools;
 	}
 
 	if (options?.reasoningEffort !== undefined) {
