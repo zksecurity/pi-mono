@@ -9,6 +9,9 @@ import type {
 	BetaMessageParam as MessageParam,
 	BetaRawMessageStreamEvent as RawMessageStreamEvent,
 	BetaRefusalStopDetails as RefusalStopDetails,
+	BetaServerToolUseBlock as ServerToolUseBlock,
+	BetaServerToolUseBlockParam as ServerToolUseBlockParam,
+	BetaWebSearchTool20250305 as WebSearchTool20250305,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 import {
 	ANTHROPIC_FEDERATION_RULE_ID_ENV,
@@ -25,8 +28,10 @@ import type {
 	ImageContent,
 	Message,
 	Model,
+	NativeWebSearchOptions,
 	ProviderEnv,
 	ProviderHeaders,
+	ServerToolUse,
 	SimpleStreamOptions,
 	StopReason,
 	StreamFunction,
@@ -61,6 +66,18 @@ import {
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampMaxTokensToContext } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
+
+/** Wire shape shared by every `*_tool_result` block Anthropic pairs with a `server_tool_use`. */
+type ServerToolResultBlock = { type: string; tool_use_id: string };
+
+/**
+ * True for the result half of a provider-executed tool call. Matched by shape rather
+ * than an explicit type list so result blocks for server tools added later are carried
+ * through instead of silently dropped.
+ */
+function isServerToolResultBlock(block: { type: string }): boolean {
+	return block.type.endsWith("_tool_result") && typeof (block as { tool_use_id?: unknown }).tool_use_id === "string";
+}
 
 /**
  * Resolve cache retention preference.
@@ -657,8 +674,13 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
-			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string })) & { index: number };
+			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string }) | ServerToolUse) & {
+				index: number;
+			};
 			const blocks = output.content as Block[];
+			// Streamed input for `server_tool_use` blocks, keyed by wire block index. Held
+			// outside the block so the scratch never rides along on an emitted event.
+			const serverToolInputJson = new Map<number, string>();
 
 			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
 				await options?.onProviderStreamEvent?.(event, model);
@@ -685,6 +707,11 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
+					const wsCount = event.message.usage.server_tool_use?.web_search_requests ?? 0;
+					if (wsCount > 0) {
+						output.usage.extras = { webSearch: wsCount };
+						output.usage.cost.extras = { webSearch: wsCount * 0.01 };
+					}
 					calculateCost(usageModel, output.usage);
 				} else if (event.type === "content_block_start") {
 					if (event.content_block.type === "fallback") {
@@ -733,6 +760,41 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						};
 						output.content.push(block);
 						stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
+					} else if (event.content_block.type === "server_tool_use") {
+						// Provider-executed tool (web_search etc.). Anthropic streams the call here
+						// and its result as a separate `*_tool_result` block; both must survive to be
+						// echoed back on the next turn. See ServerToolUse.
+						const call = event.content_block as ServerToolUseBlock;
+						const block: Block = {
+							type: "serverToolUse",
+							id: call.id,
+							toolType: call.name,
+							args: (call.input as Record<string, any>) ?? {},
+							...(call.caller !== undefined ? { caller: call.caller } : {}),
+							index: event.index,
+						};
+						serverToolInputJson.set(event.index, "");
+						output.content.push(block);
+						stream.push({
+							type: "servertooluse",
+							contentIndex: output.content.length - 1,
+							block,
+							partial: output,
+						});
+					} else if (isServerToolResultBlock(event.content_block)) {
+						// Result blocks arrive whole (no deltas), so fold them into their call block
+						// here and leave no entry of their own in `content`.
+						const result = event.content_block as unknown as ServerToolResultBlock;
+						let index = blocks.findIndex(
+							(b) => b.type === "serverToolUse" && b.id === result.tool_use_id && b.response === undefined,
+						);
+						if (index === -1) {
+							output.content.push({ type: "serverToolUse", id: result.tool_use_id } as Block);
+							index = output.content.length - 1;
+						}
+						const block = output.content[index] as ServerToolUse;
+						block.response = result as unknown as Record<string, any>;
+						stream.push({ type: "servertooluse", contentIndex: index, block, partial: output });
 					}
 				} else if (event.type === "content_block_delta") {
 					if (event.delta.type === "text_delta") {
@@ -771,6 +833,10 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 								delta: event.delta.partial_json,
 								partial: output,
 							});
+						} else if (block && block.type === "serverToolUse") {
+							// Accumulate silently; the completed block is emitted at content_block_stop.
+							const json = serverToolInputJson.get(event.index) ?? "";
+							serverToolInputJson.set(event.index, json + event.delta.partial_json);
 						}
 					} else if (event.delta.type === "signature_delta") {
 						const index = blocks.findIndex((b) => b.index === event.index);
@@ -810,6 +876,13 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 								toolCall: block,
 								partial: output,
 							});
+						} else if (block.type === "serverToolUse") {
+							// Anthropic may deliver the input inline on content_block_start instead of
+							// streaming it; only overwrite when deltas actually arrived.
+							const json = serverToolInputJson.get(event.index);
+							if (json) block.args = parseStreamingJson(json);
+							serverToolInputJson.delete(event.index);
+							stream.push({ type: "servertooluse", contentIndex: index, block, partial: output });
 						}
 					}
 				} else if (event.type === "message_delta") {
@@ -854,6 +927,13 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
+					const wsCount =
+						(event.usage as { server_tool_use?: { web_search_requests?: number } } | undefined)?.server_tool_use
+							?.web_search_requests ?? 0;
+					if (wsCount > 0) {
+						output.usage.extras = { webSearch: wsCount };
+						output.usage.cost.extras = { webSearch: wsCount * 0.01 };
+					}
 					calculateCost(usageModel, output.usage);
 				}
 			}
@@ -1140,6 +1220,11 @@ function buildParams(
 	const initialTools = initialSystemMessage?.toolsAdded ?? [];
 	const nativeToolChanges =
 		compat.supportsMidConvoSystemMessages && compat.supportsMidConvoToolChanges && initialTools.length > 0;
+	// Provider-executed tools declared on this request, by the name they occupy on
+	// `server_tool_use` blocks. Governs which server-side blocks in history may be
+	// replayed. Keep in sync with the native tools appended to `params.tools` below.
+	const enabledServerToolNames = new Set<ServerToolUseBlockParam["name"]>();
+	if (options?.nativeTools?.webSearch) enabledServerToolNames.add("web_search");
 	const converted = convertMessages(
 		conversationMessages,
 		isOAuthToken,
@@ -1150,6 +1235,7 @@ function buildParams(
 			? (tools) =>
 					convertTools(tools, isOAuthToken, compat.supportsEagerToolInputStreaming, compat.supportsStrictTools)
 			: undefined,
+		enabledServerToolNames,
 	);
 	const activeEffort = options?.effort ?? "high";
 	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, nativeToolChanges, options);
@@ -1228,6 +1314,10 @@ function buildParams(
 				toolCacheControl,
 			);
 		}
+	}
+	const nativeWebSearchTool = convertAnthropicWebSearchTool(options?.nativeTools?.webSearch);
+	if (nativeWebSearchTool) {
+		params.tools = [...(params.tools ?? []), nativeWebSearchTool];
 	}
 
 	// Managed effort models always use adaptive thinking so prefix mismatches can
@@ -1313,6 +1403,7 @@ function convertMessages(
 	managedProvider?: string,
 	/** Converts tool definitions for native `tool_addition` blocks; undefined when tool changes are not native. */
 	convertToolDefinitions?: (tools: Tool[]) => BetaTool[],
+	enabledServerToolNames: ReadonlySet<string> = new Set(),
 ): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
 	const assistantLevels = new Map<number, AnthropicEffort>();
@@ -1443,6 +1534,30 @@ function convertMessages(
 						name: isOAuthToken ? toClaudeCodeName(block.name) : block.name,
 						input: block.arguments ?? {},
 					});
+				} else if (block.type === "serverToolUse") {
+					// Replay provider-executed tool calls verbatim. Anthropic validates the assistant
+					// turn against what it produced: dropping the pair can leave two thinking blocks
+					// adjacent, which it rejects with "`thinking` or `redacted_thinking` blocks in the
+					// latest assistant message cannot be modified".
+					//
+					// Only replay while the tool that produced the pair is still declared — a
+					// `server_tool_use` for a tool absent from `tools` is its own rejection. That also
+					// filters out blocks from another provider (Gemini's toolType values never appear
+					// in this set). Skipping is safe when the tool is gone: Anthropic only validates
+					// thinking blocks in the *latest* assistant message, and a turn that just searched
+					// is by definition followed by a request that still has search enabled.
+					// A call whose result never arrived is skipped too, as a dangling tool use.
+					if (!block.id || !block.toolType || !enabledServerToolNames.has(block.toolType)) continue;
+					const result = block.response;
+					if (typeof result?.type !== "string") continue;
+					blocks.push({
+						type: "server_tool_use",
+						id: block.id,
+						name: block.toolType as ServerToolUseBlockParam["name"],
+						input: block.args ?? {},
+						...(block.caller !== undefined ? { caller: block.caller as ServerToolUseBlockParam["caller"] } : {}),
+					});
+					blocks.push(result as unknown as ContentBlockParam);
 				}
 			}
 			if (blocks.length === 0) continue;
@@ -1608,6 +1723,42 @@ function convertTools(
 			...(cacheControl && index === tools.length - 1 ? { cache_control: cacheControl } : {}),
 		};
 	});
+}
+
+function normalizeNativeWebSearch(
+	webSearch: boolean | NativeWebSearchOptions | undefined,
+): NativeWebSearchOptions | undefined {
+	if (!webSearch) return undefined;
+	if (webSearch === true) return {};
+	return webSearch;
+}
+
+function convertAnthropicWebSearchTool(
+	webSearch: boolean | NativeWebSearchOptions | undefined,
+): WebSearchTool20250305 | undefined {
+	const config = normalizeNativeWebSearch(webSearch);
+	if (!config) return undefined;
+
+	if (config.allowedDomains?.length && config.blockedDomains?.length) {
+		throw new Error("Anthropic web search supports allowedDomains or blockedDomains, not both.");
+	}
+
+	return {
+		name: "web_search",
+		type: "web_search_20250305",
+		allowed_domains: config.allowedDomains,
+		blocked_domains: config.blockedDomains,
+		max_uses: config.maxUses,
+		user_location: config.userLocation
+			? {
+					type: config.userLocation.type ?? "approximate",
+					city: config.userLocation.city,
+					country: config.userLocation.country,
+					region: config.userLocation.region,
+					timezone: config.userLocation.timezone,
+				}
+			: undefined,
+	};
 }
 
 function mapStopReason(

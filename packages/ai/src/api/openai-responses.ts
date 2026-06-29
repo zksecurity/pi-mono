@@ -323,6 +323,7 @@ function buildParams(
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
 		},
 	});
+	type ResponseInclude = NonNullable<ResponseCreateParamsStreaming["include"]>[number];
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 	// Sign in with ChatGPT rejects these request fields.
@@ -336,6 +337,7 @@ function buildParams(
 		prompt_cache_options: omitUnsupportedFields ? undefined : getPromptCacheOptions(compat, cacheRetention),
 		store: false,
 	};
+	const include = new Set<ResponseInclude>();
 
 	if (options?.maxTokens && compat.supportsMaxOutputTokens && !omitUnsupportedFields) {
 		params.max_output_tokens = Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS);
@@ -349,11 +351,19 @@ function buildParams(
 		params.service_tier = options.serviceTier;
 	}
 
-	if (transcriptTools.requestTools.length > 0) {
-		params.tools = convertResponsesTools(transcriptTools.requestTools, {
-			supportsStrictMode: compat.supportsStrictMode,
-			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
-		});
+	const convertedTools = convertResponsesTools(transcriptTools.requestTools, {
+		supportsStrictMode: compat.supportsStrictMode,
+		supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
+		nativeWebSearch: options?.nativeTools?.webSearch,
+		provider: model.provider,
+	});
+	if (convertedTools.length > 0) params.tools = convertedTools;
+	if (options?.nativeTools?.webSearch) {
+		include.add("web_search_call.action.sources");
+		// xAI's Responses API rejects "web_search_call.results" in `include`; only OpenAI supports it.
+		if (model.provider !== "xai") {
+			include.add("web_search_call.results");
+		}
 	}
 
 	if (options?.toolChoice !== undefined) {
@@ -370,13 +380,17 @@ function buildParams(
 				effort: effort as NonNullable<typeof params.reasoning>["effort"],
 				summary: options?.reasoningSummary || "auto",
 			};
-			params.include = ["reasoning.encrypted_content"];
+			include.add("reasoning.encrypted_content");
 		} else if (model.provider !== "github-copilot" && model.thinkingLevelMap?.off !== null) {
 			params.reasoning = {
 				effort: (model.thinkingLevelMap?.off ?? "none") as NonNullable<typeof params.reasoning>["effort"],
 			};
 		}
 		if (model.provider === "xai") params.include = ["reasoning.encrypted_content"];
+	}
+
+	if (include.size > 0) {
+		params.include = [...include];
 	}
 
 	// Last so model and request sampling parameters override named request fields.
