@@ -1,3 +1,4 @@
+import { assertNoNativeToolNameCollision } from "@earendil-works/pi-ai";
 import type {
 	ImageContent,
 	Message,
@@ -67,9 +68,17 @@ type MutableAgentState = Omit<AgentState, "isStreaming" | "streamingMessage" | "
 };
 
 function createMutableAgentState(
-	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>,
+	initialState:
+		| Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>
+		| undefined,
+	getNativeTools: () => NativeToolsOptions | undefined,
 ): MutableAgentState {
-	let tools = initialState?.tools?.slice() ?? [];
+	const initialTools = initialState?.tools?.slice() ?? [];
+	assertNoNativeToolNameCollision(
+		initialTools.map((t) => t.name),
+		getNativeTools(),
+	);
+	let tools = initialTools;
 	let messages = initialState?.messages?.slice() ?? [];
 
 	return {
@@ -80,6 +89,10 @@ function createMutableAgentState(
 			return tools;
 		},
 		set tools(nextTools: AgentTool<any>[]) {
+			assertNoNativeToolNameCollision(
+				nextTools.map((t) => t.name),
+				getNativeTools(),
+			);
 			tools = nextTools.slice();
 		},
 		get messages() {
@@ -220,7 +233,8 @@ export class Agent {
 	constructor(options: AgentOptions) {
 		// Older compiled consumers may omit options or streamFn even though the current API requires them.
 		const runtimeOptions: Partial<AgentOptions> = options ?? {};
-		this._state = createMutableAgentState(runtimeOptions.initialState);
+		this.nativeTools = runtimeOptions.nativeTools;
+		this._state = createMutableAgentState(runtimeOptions.initialState, () => this.nativeTools);
 		this.convertToLlm = runtimeOptions.convertToLlm ?? defaultConvertToLlm;
 		this.transformContext = runtimeOptions.transformContext;
 		this.streamFunction = runtimeOptions.streamFn ?? getDefaultStreamFn();
@@ -239,7 +253,6 @@ export class Agent {
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
-		this.nativeTools = runtimeOptions.nativeTools;
 	}
 
 	/**
