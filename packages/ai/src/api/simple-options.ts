@@ -61,6 +61,7 @@ export function buildBaseOptions(
 		maxRetryDelayMs: options?.maxRetryDelayMs,
 		metadata: options?.metadata,
 		env: options?.env,
+		nativeTools: options?.nativeTools,
 	};
 }
 

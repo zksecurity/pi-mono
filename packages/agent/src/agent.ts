@@ -1,10 +1,12 @@
 import {
+	assertNoNativeToolNameCollision,
 	createInitialSystemMessage,
 	getCurrentSystemMessage,
 	getCurrentSystemPrompt,
 	type ImageContent,
 	type Message,
 	type Model,
+	type NativeToolsOptions,
 	type SimpleStreamOptions,
 	type TextContent,
 	type ThinkingBudgets,
@@ -79,8 +81,16 @@ export type AgentInitialState = Partial<
 	Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">
 >;
 
-function createMutableAgentState(initialState?: AgentInitialState): MutableAgentState {
-	let tools = initialState?.tools?.slice() ?? [];
+function createMutableAgentState(
+	initialState: AgentInitialState | undefined,
+	getNativeTools: () => NativeToolsOptions | undefined,
+): MutableAgentState {
+	const initialTools = initialState?.tools?.slice() ?? [];
+	assertNoNativeToolNameCollision(
+		initialTools.map((t) => t.name),
+		getNativeTools(),
+	);
+	let tools = initialTools;
 	let messages = initialState?.messages?.slice() ?? [];
 	const initialMessage = createInitialSystemMessage(initialState?.systemPrompt, tools.map(toToolDeclaration));
 	if (messages[0]?.role !== "system" && initialMessage) messages.unshift(initialMessage);
@@ -95,6 +105,10 @@ function createMutableAgentState(initialState?: AgentInitialState): MutableAgent
 			return tools;
 		},
 		set tools(nextTools: AgentTool<any>[]) {
+			assertNoNativeToolNameCollision(
+				nextTools.map((t) => t.name),
+				getNativeTools(),
+			);
 			tools = nextTools.slice();
 		},
 		get messages() {
@@ -138,6 +152,7 @@ export interface AgentOptions {
 	transport?: Transport;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
+	nativeTools?: NativeToolsOptions;
 }
 
 class PendingMessageQueue {
@@ -226,11 +241,14 @@ export class Agent {
 	public maxRetryDelayMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
+	/** Provider-native built-in tools (for example hosted web search). */
+	public nativeTools?: NativeToolsOptions;
 
 	constructor(options: AgentOptions) {
 		// Older compiled consumers may omit options or streamFn even though the current API requires them.
 		const runtimeOptions: Partial<AgentOptions> = options ?? {};
-		this._state = createMutableAgentState(runtimeOptions.initialState);
+		this.nativeTools = runtimeOptions.nativeTools;
+		this._state = createMutableAgentState(runtimeOptions.initialState, () => this.nativeTools);
 		this.convertToLlm = runtimeOptions.convertToLlm ?? defaultConvertToLlm;
 		this.transformContext = runtimeOptions.transformContext;
 		this.streamFunction = runtimeOptions.streamFn ?? getDefaultStreamFn();
@@ -490,6 +508,7 @@ export class Agent {
 							return await this.prepareNextTurn?.(this.signal);
 						}
 					: undefined,
+			nativeTools: this.nativeTools,
 			convertToLlm: this.convertToLlm,
 			transformContext: this.transformContext,
 			getApiKey: this.getApiKey,
