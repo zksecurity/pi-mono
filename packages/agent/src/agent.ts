@@ -1,4 +1,5 @@
 import {
+	assertNoNativeToolNameCollision,
 	type ImageContent,
 	type Message,
 	type Model,
@@ -66,9 +67,17 @@ type MutableAgentState = Omit<AgentState, "isStreaming" | "streamingMessage" | "
 };
 
 function createMutableAgentState(
-	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>,
+	initialState:
+		| Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>
+		| undefined,
+	getNativeTools: () => NativeToolsOptions | undefined,
 ): MutableAgentState {
-	let tools = initialState?.tools?.slice() ?? [];
+	const initialTools = initialState?.tools?.slice() ?? [];
+	assertNoNativeToolNameCollision(
+		initialTools.map((t) => t.name),
+		getNativeTools(),
+	);
+	let tools = initialTools;
 	let messages = initialState?.messages?.slice() ?? [];
 
 	return {
@@ -79,6 +88,10 @@ function createMutableAgentState(
 			return tools;
 		},
 		set tools(nextTools: AgentTool<any>[]) {
+			assertNoNativeToolNameCollision(
+				nextTools.map((t) => t.name),
+				getNativeTools(),
+			);
 			tools = nextTools.slice();
 		},
 		get messages() {
@@ -212,7 +225,8 @@ export class Agent {
 	public nativeTools?: NativeToolsOptions;
 
 	constructor(options: AgentOptions = {}) {
-		this._state = createMutableAgentState(options.initialState);
+		this.nativeTools = options.nativeTools;
+		this._state = createMutableAgentState(options.initialState, () => this.nativeTools);
 		this.convertToLlm = options.convertToLlm ?? defaultConvertToLlm;
 		this.transformContext = options.transformContext;
 		this.streamFn = options.streamFn ?? streamSimple;
@@ -230,7 +244,6 @@ export class Agent {
 		this.transport = options.transport ?? "auto";
 		this.maxRetryDelayMs = options.maxRetryDelayMs;
 		this.toolExecution = options.toolExecution ?? "parallel";
-		this.nativeTools = options.nativeTools;
 	}
 
 	/**
