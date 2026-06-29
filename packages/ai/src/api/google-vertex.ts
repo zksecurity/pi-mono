@@ -31,6 +31,8 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import type { GoogleThinkingLevel } from "./google-shared.ts";
 import {
+	applyServerToolPart,
+	buildGoogleToolConfig,
 	convertGoogleSearchTool,
 	convertMessages,
 	convertTools,
@@ -229,6 +231,31 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 								partial: output,
 							});
 							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+						}
+
+						// Server-side built-in tool calls (e.g. google_search grounding combined with
+						// function calling). Recorded in content for verbatim replay; the model executes
+						// them itself, so they are not surfaced as streaming tool-call events.
+						if (part.toolCall || part.toolResponse) {
+							if (currentBlock) {
+								if (currentBlock.type === "text") {
+									stream.push({
+										type: "text_end",
+										contentIndex: blockIndex(),
+										content: currentBlock.text,
+										partial: output,
+									});
+								} else {
+									stream.push({
+										type: "thinking_end",
+										contentIndex: blockIndex(),
+										content: currentBlock.thinking,
+										partial: output,
+									});
+								}
+								currentBlock = null;
+							}
+							applyServerToolPart(output.content, part);
 						}
 					}
 				}
@@ -482,10 +509,12 @@ function buildParams(
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
 		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
 		...(tools.length > 0 && { tools }),
-		...(functionCallingMode !== undefined && {
-			toolConfig: { functionCallingConfig: { mode: functionCallingMode } },
-		}),
 	};
+
+	config.toolConfig = buildGoogleToolConfig({
+		functionCallingMode,
+		hasBuiltInTool: !!googleSearch,
+	});
 
 	if (options.thinking?.enabled && model.reasoning) {
 		const thinkingConfig: ThinkingConfig = { includeThoughts: true };
