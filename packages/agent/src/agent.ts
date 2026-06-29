@@ -5,6 +5,7 @@ import {
 	type ImageContent,
 	type Message,
 	type Model,
+	type NativeToolsOptions,
 	type SimpleStreamOptions,
 	type TextContent,
 	type ThinkingBudgets,
@@ -138,6 +139,7 @@ export interface AgentOptions {
 	transport?: Transport;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
+	nativeTools?: NativeToolsOptions;
 }
 
 class PendingMessageQueue {
@@ -226,6 +228,8 @@ export class Agent {
 	public maxRetryDelayMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
+	/** Provider-native built-in tools (for example hosted web search). */
+	public nativeTools?: NativeToolsOptions;
 
 	constructor(options: AgentOptions) {
 		// Older compiled consumers may omit options or streamFn even though the current API requires them.
@@ -251,6 +255,7 @@ export class Agent {
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
+		this.nativeTools = runtimeOptions.nativeTools;
 	}
 
 	/**
@@ -490,6 +495,7 @@ export class Agent {
 							return await this.prepareNextTurn?.(this.signal);
 						}
 					: undefined,
+			nativeTools: this.nativeTools,
 			convertToLlm: this.convertToLlm,
 			transformContext: this.transformContext,
 			getApiKey: this.getApiKey,
