@@ -116,6 +116,7 @@ This is a fork. `zkao` is our long-lived working branch and is periodically reba
 | `zkao-v0.79.0-backup` | v0.79.0 | 2026-06-12 | Snapshot before rebasing onto `main` (v0.79.1); preserves our Claude Fable 5 support commit, dropped during the rebase in favor of upstream's own Fable 5 metadata |
 | `zkao-v0.79.1-backup` | v0.79.1 | 2026-06-20 | Snapshot before rebasing onto `main` (v0.79.8); dropped our cherry-picked Fable 5 adaptive-thinking test commit (superseded upstream), re-resolved web-search vs. refusal-detail conflicts |
 | `zkao-v0.79.8-backup` | v0.79.8 | 2026-06-29 | Snapshot before rebasing onto `main` (v0.80.2); re-ported every fork commit onto the upstream Models-runtime refactor, which moved provider stream/convert logic from `providers/*.ts` into `api/*.ts` |
+| `zkao-v0.80.2-backup` | v0.80.2 | 2026-07-08 | Snapshot before rebasing onto `main` (v0.80.3); re-resolved the `agent.ts` `prepareNextTurn` conflict; includes the `streamProxy` fix that relays `nativeTools` (native web search was silently dropped through the proxy) |
 
 ## License
 
