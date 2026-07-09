@@ -58,29 +58,27 @@ export type ProxyAssistantMessageEvent =
 			providerThinkingLevel?: string;
 	  };
 
-type ProxySerializableStreamOptions = Pick<
-	SimpleStreamOptions,
-	| "temperature"
-	| "samplingParams"
-	| "maxTokens"
-	| "reasoning"
-	| "cacheRetention"
-	| "sessionId"
-	| "headers"
-	| "metadata"
-	| "transport"
-	| "thinkingBudgets"
-	| "maxRetryDelayMs"
->;
-
-export interface ProxyStreamOptions extends ProxySerializableStreamOptions {
-	/** Local abort signal for the proxy request */
-	signal?: AbortSignal;
+export interface ProxyStreamOptions extends SimpleStreamOptions {
 	/** Auth token for the proxy server */
 	authToken: string;
 	/** Proxy server URL (e.g., "https://genai.example.com") */
 	proxyUrl: string;
 }
+
+/**
+ * Option keys that must NOT cross the proxy boundary: the local abort `signal`,
+ * the caller's provider `apiKey`, the `onPayload`/`onResponse` callbacks, the
+ * local `env` overrides, and the proxy's own `authToken`/`proxyUrl`. Every other
+ * member of SimpleStreamOptions is plain JSON-serializable config and is relayed
+ * verbatim, so new serializable options (e.g. `nativeTools`) reach the proxy
+ * automatically instead of being silently dropped by a hand-maintained allowlist.
+ *
+ * Keep this list in sync with the non-serializable members of StreamOptions: it
+ * is the only thing between "add an option" and "the proxy honors it".
+ */
+type NonProxyableOptionKey = "signal" | "apiKey" | "onPayload" | "onResponse" | "env" | "authToken" | "proxyUrl";
+
+type ProxySerializableStreamOptions = Omit<ProxyStreamOptions, NonProxyableOptionKey>;
 
 /**
  * Stream function that proxies through a server instead of calling LLM providers directly.
@@ -102,19 +100,20 @@ export interface ProxyStreamOptions extends ProxySerializableStreamOptions {
  * ```
  */
 function buildProxyRequestOptions(options: ProxyStreamOptions): ProxySerializableStreamOptions {
-	return {
-		temperature: options.temperature,
-		samplingParams: options.samplingParams,
-		maxTokens: options.maxTokens,
-		reasoning: options.reasoning,
-		cacheRetention: options.cacheRetention,
-		sessionId: options.sessionId,
-		headers: options.headers,
-		metadata: options.metadata,
-		transport: options.transport,
-		thinkingBudgets: options.thinkingBudgets,
-		maxRetryDelayMs: options.maxRetryDelayMs,
-	};
+	// Relay every serializable option; strip only the non-proxyable keys (local
+	// handles, secrets, callbacks, and the proxy's own transport fields) so new
+	// serializable options such as `nativeTools` are not silently dropped.
+	const {
+		signal: _signal,
+		apiKey: _apiKey,
+		onPayload: _onPayload,
+		onResponse: _onResponse,
+		env: _env,
+		authToken: _authToken,
+		proxyUrl: _proxyUrl,
+		...serializable
+	} = options;
+	return serializable;
 }
 
 export function streamProxy(model: Model<any>, context: Context, options: ProxyStreamOptions): ProxyMessageEventStream {
