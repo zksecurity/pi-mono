@@ -304,11 +304,15 @@ function buildParams(
 		supportsStrictMode: compat.supportsStrictMode,
 		supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
 		nativeWebSearch: options?.nativeTools?.webSearch,
+		provider: model.provider,
 	});
 	if (convertedTools.length > 0) params.tools = convertedTools;
 	if (options?.nativeTools?.webSearch) {
 		include.add("web_search_call.action.sources");
-		include.add("web_search_call.results");
+		// xAI's Responses API rejects "web_search_call.results" in `include`; only OpenAI supports it.
+		if (model.provider !== "xai") {
+			include.add("web_search_call.results");
+		}
 	}
 
 	if (options?.toolChoice !== undefined) {

@@ -129,6 +129,16 @@ export interface NativeWebSearchOptions {
 	maxUses?: number;
 	searchContextSize?: "low" | "medium" | "high";
 	userLocation?: NativeToolUserLocation;
+	/**
+	 * xAI (Grok) only: let the model inspect images it encounters while browsing.
+	 * Ignored by providers that don't support it.
+	 */
+	enableImageUnderstanding?: boolean;
+	/**
+	 * xAI (Grok) only: let the model search for images and embed them in the
+	 * response as Markdown. Ignored by providers that don't support it.
+	 */
+	enableImageSearch?: boolean;
 }
 
 export interface NativeToolsOptions {
