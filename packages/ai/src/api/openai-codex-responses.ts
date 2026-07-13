@@ -582,6 +582,7 @@ function buildRequestBody(
 		supportsStrictMode,
 		supportsOpenAIGrammarTools,
 		nativeWebSearch: options?.nativeTools?.webSearch,
+		provider: model.provider,
 	});
 	if (convertedTools.length > 0) {
 		body.tools = convertedTools;
