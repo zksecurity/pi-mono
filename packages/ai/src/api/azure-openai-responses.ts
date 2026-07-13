@@ -299,6 +299,7 @@ function buildParams(
 		supportsStrictMode: model.compat?.supportsStrictMode ?? true,
 		supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		nativeWebSearch: options?.nativeTools?.webSearch,
+		provider: model.provider,
 	});
 	if (convertedTools.length > 0) {
 		params.tools = convertedTools;
