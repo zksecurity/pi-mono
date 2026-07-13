@@ -1103,11 +1103,17 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				if (m.tool_call !== true) continue;
 
 				models.push({
+					// xAI's /v1/responses endpoint is OpenAI-Responses compatible and is the only
+					// surface that exposes the native `web_search` tool, so route Grok through
+					// openai-responses rather than chat completions.
 					id: modelId,
 					name: m.name || modelId,
-					api: "openai-completions",
+					api: "openai-responses",
 					provider: "xai",
 					baseUrl: "https://api.x.ai/v1",
+					// Grok reasoning models are always-on: xAI rejects reasoning_effort "none",
+					// so mark the "off" level unsupported (other levels pass through).
+					...(m.reasoning === true ? { thinkingLevelMap: { off: null } } : {}),
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
@@ -2030,12 +2036,14 @@ async function generateModels() {
 	];
 	allModels.push(...codexModels);
 
-	// Add missing Grok models
-	const missingGrokModels: Model<"openai-completions">[] = [
+	// Add missing Grok models. xAI's /v1/responses endpoint is OpenAI-Responses
+	// compatible and is the only surface that exposes the native `web_search` tool,
+	// so route Grok through openai-responses rather than chat completions.
+	const missingGrokModels: Model<"openai-responses">[] = [
 		{
 			id: "grok-3",
 			name: "Grok 3",
-			api: "openai-completions",
+			api: "openai-responses",
 			baseUrl: "https://api.x.ai/v1",
 			provider: "xai",
 			reasoning: false,
@@ -2047,7 +2055,7 @@ async function generateModels() {
 		{
 			id: "grok-3-fast",
 			name: "Grok 3 Fast",
-			api: "openai-completions",
+			api: "openai-responses",
 			baseUrl: "https://api.x.ai/v1",
 			provider: "xai",
 			reasoning: false,
@@ -2059,7 +2067,7 @@ async function generateModels() {
 		{
 			id: "grok-code-fast-1",
 			name: "Grok Code Fast 1",
-			api: "openai-completions",
+			api: "openai-responses",
 			baseUrl: "https://api.x.ai/v1",
 			provider: "xai",
 			reasoning: false,

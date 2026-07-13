@@ -519,6 +519,7 @@ function buildRequestBody(
 	const convertedTools = convertResponsesTools(context.tools, {
 		strict: null,
 		nativeWebSearch: options?.nativeTools?.webSearch,
+		provider: model.provider,
 	});
 	if (convertedTools.length > 0) {
 		body.tools = convertedTools;
