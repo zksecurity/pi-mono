@@ -523,6 +523,7 @@ function buildRequestBody(
 	const convertedTools = convertResponsesTools(toolPlacement.immediate, {
 		strict: null,
 		nativeWebSearch: options?.nativeTools?.webSearch,
+		provider: model.provider,
 	});
 	if (convertedTools.length > 0) {
 		body.tools = convertedTools;
