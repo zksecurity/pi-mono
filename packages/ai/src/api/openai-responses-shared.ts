@@ -87,6 +87,12 @@ export interface ConvertResponsesToolsOptions {
 	strict?: boolean | null;
 	deferLoading?: boolean;
 	nativeWebSearch?: boolean | NativeWebSearchOptions;
+	/**
+	 * Provider id, used to select provider-specific web-search semantics. xAI's
+	 * Responses API extends the OpenAI `web_search` tool with `excluded_domains`
+	 * and image options; OpenAI itself supports neither.
+	 */
+	provider?: string;
 }
 
 type OpenAIFunctionTool = Extract<OpenAITool, { type: "function" }>;
@@ -313,13 +319,38 @@ function normalizeNativeWebSearch(
 	return webSearch;
 }
 
-function convertOpenAIWebSearchTool(webSearch: boolean | NativeWebSearchOptions | undefined): OpenAITool | undefined {
+// xAI's /v1/responses extends the OpenAI `web_search` tool with fields the OpenAI
+// SDK types don't model (excluded_domains, image options), so widen locally.
+type XaiWebSearchTool = OpenAITool & {
+	filters?: { allowed_domains?: string[]; excluded_domains?: string[] };
+	enable_image_understanding?: boolean;
+	enable_image_search?: boolean;
+};
+
+function convertOpenAIWebSearchTool(
+	webSearch: boolean | NativeWebSearchOptions | undefined,
+	provider?: string,
+): OpenAITool | undefined {
 	const config = normalizeNativeWebSearch(webSearch);
 	if (!config) return undefined;
 
 	if (config.allowedDomains?.length && config.blockedDomains?.length) {
-		throw new Error("OpenAI web search supports allowedDomains or blockedDomains, not both.");
+		throw new Error("web search supports allowedDomains or blockedDomains, not both.");
 	}
+
+	// xAI supports domain exclusion and image options; plain OpenAI does not.
+	if (provider === "xai") {
+		const tool: XaiWebSearchTool = { type: "web_search" };
+		if (config.allowedDomains?.length) {
+			tool.filters = { allowed_domains: config.allowedDomains };
+		} else if (config.blockedDomains?.length) {
+			tool.filters = { excluded_domains: config.blockedDomains };
+		}
+		if (config.enableImageUnderstanding) tool.enable_image_understanding = true;
+		if (config.enableImageSearch) tool.enable_image_search = true;
+		return tool;
+	}
+
 	if (config.blockedDomains?.length) {
 		throw new Error("OpenAI web search does not support blockedDomains. Use allowedDomains instead.");
 	}
@@ -367,7 +398,7 @@ export function convertResponsesTools(
 		}),
 	);
 
-	const webSearchTool = convertOpenAIWebSearchTool(options?.nativeWebSearch);
+	const webSearchTool = convertOpenAIWebSearchTool(options?.nativeWebSearch, options?.provider);
 	if (webSearchTool) {
 		output.push(webSearchTool);
 	}

@@ -277,6 +277,7 @@ function buildParams(
 
 	const convertedTools = convertResponsesTools(context.tools, {
 		nativeWebSearch: options?.nativeTools?.webSearch,
+		provider: model.provider,
 	});
 	if (convertedTools.length > 0) {
 		params.tools = convertedTools;
