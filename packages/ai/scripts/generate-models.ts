@@ -2629,6 +2629,34 @@ async function generateModels() {
 	];
 	allModels.push(...codexModels);
 
+	// Meta Model API (Muse Spark). Not on models.dev yet; keep a small explicit
+	// list. Meta's /v1/responses endpoint is OpenAI-Responses compatible and is
+	// the surface that exposes agent primitives (parallel tool calls, streamed
+	// tool-call args, search grounding), so Muse runs through openai-responses.
+	// Muse Spark is a reasoning model; its chain-of-thought is billed at the
+	// output rate. cacheRead is an estimate until Meta publishes a cached rate.
+	const museModels: Model<"openai-responses">[] = [
+		{
+			id: "muse-spark-1.1",
+			name: "Muse Spark 1.1",
+			api: "openai-responses",
+			baseUrl: "https://api.meta.ai/v1",
+			provider: "meta",
+			// Muse always reasons and rejects reasoning.effort "none"; off -> null
+			// tells the responses layer to omit the effort field by default.
+			thinkingLevelMap: { off: null },
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 1.25, output: 4.25, cacheRead: 0.125, cacheWrite: 0 },
+			contextWindow: 1048576,
+			maxTokens: 131072,
+		},
+	];
+	for (const model of museModels) {
+		if (!allModels.some(m => m.provider === model.provider && m.id === model.id)) {
+			allModels.push(model);
+		}
+	}
 	// Add missing Mistral Medium 3.5 model until models.dev includes it
 	if (!allModels.some(m => m.provider === "mistral" && m.id === "mistral-medium-3.5")) {
 		allModels.push({
