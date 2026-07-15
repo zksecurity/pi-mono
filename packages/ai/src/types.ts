@@ -38,6 +38,7 @@ export type KnownProvider =
 	| "openai"
 	| "azure-openai-responses"
 	| "openai-codex"
+	| "meta"
 	| "nvidia"
 	| "deepseek"
 	| "github-copilot"
