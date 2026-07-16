@@ -353,6 +353,13 @@ export const OpenAICompletionsCompatSchema = openObject(OpenAICompletionsCompatP
 });
 
 const OpenAIResponsesCompatProperties = {
+	replayReasoning: opt(
+		bool({
+			description:
+				"Whether to replay reasoning items. Disable for providers such as Meta Muse that expire server-referenced reasoning items.",
+			default: true,
+		}),
+	),
 	supportsDeveloperRole: optionalCompatBoolean({
 		description: "Whether the provider supports the developer role instead of system.",
 		default: true,

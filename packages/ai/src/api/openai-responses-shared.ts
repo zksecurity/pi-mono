@@ -142,6 +142,8 @@ export interface ConvertResponsesMessagesOptions {
 	 * and to apply to the next reply.
 	 */
 	configurationUpdateEffort?: string;
+	/** Whether to replay prior reasoning items inline. Default: true. */
+	replayReasoning?: boolean;
 }
 
 export interface ConvertResponsesToolsOptions {
@@ -205,6 +207,7 @@ export function convertResponsesMessages<TApi extends Api>(
 ): ResponseInput {
 	const normalizedContext = resolveTranscript(context, options?.supportsMidConvoSystemMessages);
 	const messages: ResponseInput = [];
+	const replayReasoning = options?.replayReasoning ?? true;
 
 	const normalizeIdPart = (part: string): string => {
 		const sanitized = part.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -341,7 +344,7 @@ export function convertResponsesMessages<TApi extends Api>(
 
 			for (const block of msg.content) {
 				if (block.type === "thinking") {
-					if (block.thinkingSignature) {
+					if (replayReasoning && block.thinkingSignature) {
 						const reasoningItem = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;
 						output.push(reasoningItem);
 					}
@@ -379,7 +382,7 @@ export function convertResponsesMessages<TApi extends Api>(
 					// and custom_tool_call ids must be ctc_*. Foreign tool call ids are normalized to fc_*, and
 					// a call can switch between the two types when grammar tool support differs.
 					const itemIdPrefix = customInputProperty === undefined ? "fc_" : "ctc_";
-					if (isDifferentModel || !itemId?.startsWith(itemIdPrefix)) {
+					if (isDifferentModel || !replayReasoning || !itemId?.startsWith(itemIdPrefix)) {
 						itemId = undefined;
 					}
 
