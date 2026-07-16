@@ -2068,6 +2068,10 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					api: "openai-responses",
 					provider: "meta",
 					baseUrl: "https://api.meta.ai/v1",
+					// Muse's Responses endpoint server-references reasoning items (ignores
+					// store:false); replaying them 400s with "reasoning item not found or
+					// has expired" on long multi-turn sessions. Don't replay them.
+					compat: { replayReasoning: false },
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
