@@ -1046,6 +1046,11 @@
           "description": "Whether the provider accepts max_output_tokens. Some Codex-protocol gateways reject it.",
           "default": true
         },
+        "replayReasoning": {
+          "type": "boolean",
+          "description": "Whether to replay reasoning items. Disable for providers such as Meta Muse that expire server-referenced reasoning items.",
+          "default": true
+        },
         "supportsEagerToolInputStreaming": {
           "type": "boolean",
           "description": "Whether the provider accepts per-tool eager_input_streaming. When false, the Anthropic provider omits tools[].eager_input_streaming and sends the legacy fine-grained-tool-streaming-2025-05-14 beta header for tool-enabled requests.",

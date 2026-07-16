@@ -409,6 +409,13 @@ export const OpenAIResponsesCompatSchema = Type.Object(
 				default: true,
 			}),
 		),
+		replayReasoning: Type.Optional(
+			Type.Boolean({
+				description:
+					"Whether to replay reasoning items. Disable for providers such as Meta Muse that expire server-referenced reasoning items.",
+				default: true,
+			}),
+		),
 	},
 	{ description: "Compatibility settings for OpenAI Responses APIs.", additionalProperties: true },
 );
