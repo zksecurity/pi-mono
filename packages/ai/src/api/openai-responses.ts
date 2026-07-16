@@ -91,6 +91,7 @@ function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCo
 		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
 		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
 		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
+		replayReasoning: model.compat?.replayReasoning ?? true,
 	};
 }
 
@@ -322,6 +323,7 @@ function buildParams(
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
 		},
+		replayReasoning: compat.replayReasoning,
 	});
 	type ResponseInclude = NonNullable<ResponseCreateParamsStreaming["include"]>[number];
 
@@ -380,7 +382,11 @@ function buildParams(
 				effort: effort as NonNullable<typeof params.reasoning>["effort"],
 				summary: options?.reasoningSummary || "auto",
 			};
-			include.add("reasoning.encrypted_content");
+			// Only request encrypted reasoning when we intend to replay it. Providers
+			// that expire reasoning server-side (Meta Muse) set replayReasoning false.
+			if (compat.replayReasoning) {
+				include.add("reasoning.encrypted_content");
+			}
 		} else if (model.provider !== "github-copilot" && model.thinkingLevelMap?.off !== null) {
 			params.reasoning = {
 				effort: (model.thinkingLevelMap?.off ?? "none") as NonNullable<typeof params.reasoning>["effort"],
