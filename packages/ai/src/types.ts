@@ -640,6 +640,19 @@ export interface OpenAIResponsesCompat {
 	supportsLongCacheRetention?: boolean;
 	/** Whether the model supports client-executed tool search for deferred tools. Default: false. */
 	supportsToolSearch?: boolean;
+	/**
+	 * Whether prior reasoning items are replayed inline on subsequent turns.
+	 * Real OpenAI Responses is stateless (`store: false`): reasoning items carry
+	 * self-contained `encrypted_content` and are replayed verbatim. Meta's Muse
+	 * endpoint diverges — on long multi-turn sessions, replaying prior reasoning
+	 * items 400s with `Referenced reasoning item '…' was not found or has
+	 * expired`, i.e. the item is server-referenced and eventually becomes invalid
+	 * despite `store: false` (not a strict id lookup: a mutated id with valid
+	 * encrypted content still resolves). Set this false for such providers to
+	 * stop replaying reasoning items (and to drop the paired `fc_…` id, like the
+	 * cross-model path), which removes that failure class. Default: true.
+	 */
+	replayReasoning?: boolean;
 }
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */

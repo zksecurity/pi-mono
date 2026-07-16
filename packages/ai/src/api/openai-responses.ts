@@ -68,6 +68,7 @@ function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCo
 		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
+		replayReasoning: model.compat?.replayReasoning ?? true,
 	};
 }
 
@@ -235,6 +236,7 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 	const toolPlacement = splitDeferredTools(context, compat.supportsToolSearch);
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
 		deferredTools: toolPlacement.deferred,
+		replayReasoning: compat.replayReasoning,
 	});
 	type ResponseInclude = NonNullable<ResponseCreateParamsStreaming["include"]>[number];
 
@@ -289,7 +291,11 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 				effort: effort as NonNullable<typeof params.reasoning>["effort"],
 				summary: options?.reasoningSummary || "auto",
 			};
-			include.add("reasoning.encrypted_content");
+			// Only request encrypted reasoning when we intend to replay it. Providers
+			// that expire reasoning server-side (Meta Muse) set replayReasoning false.
+			if (compat.replayReasoning) {
+				include.add("reasoning.encrypted_content");
+			}
 		} else if (model.provider !== "github-copilot" && model.thinkingLevelMap?.off !== null) {
 			params.reasoning = {
 				effort: (model.thinkingLevelMap?.off ?? "none") as NonNullable<typeof params.reasoning>["effort"],

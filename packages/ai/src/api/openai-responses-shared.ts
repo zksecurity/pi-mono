@@ -81,6 +81,13 @@ export interface OpenAIResponsesStreamOptions {
 export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
 	deferredTools?: ReadonlyMap<string, Tool>;
+	/**
+	 * Whether to replay prior reasoning items inline. When false, reasoning items
+	 * are omitted and the paired `fc_…` id is dropped, for providers whose
+	 * Responses endpoint treats reasoning as server-side state with a TTL (Meta
+	 * Muse). Default: true.
+	 */
+	replayReasoning?: boolean;
 }
 
 export interface ConvertResponsesToolsOptions {
@@ -109,6 +116,7 @@ export function convertResponsesMessages<TApi extends Api>(
 ): ResponseInput {
 	const messages: ResponseInput = [];
 	const loadedToolNames = new Set<string>();
+	const replayReasoning = options?.replayReasoning ?? true;
 
 	const normalizeIdPart = (part: string): string => {
 		const sanitized = part.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -186,7 +194,7 @@ export function convertResponsesMessages<TApi extends Api>(
 
 			for (const block of msg.content) {
 				if (block.type === "thinking") {
-					if (block.thinkingSignature) {
+					if (replayReasoning && block.thinkingSignature) {
 						const reasoningItem = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;
 						output.push(reasoningItem);
 					}
@@ -219,7 +227,9 @@ export function convertResponsesMessages<TApi extends Api>(
 					// For different-model messages, set id to undefined to avoid pairing validation.
 					// OpenAI tracks which fc_xxx IDs were paired with rs_xxx reasoning items.
 					// By omitting the id, we avoid triggering that validation (like cross-provider does).
-					if (isDifferentModel && itemId?.startsWith("fc_")) {
+					// Same when reasoning replay is off: the paired reasoning item is gone, so the
+					// fc_xxx id would dangle and the provider would reject it.
+					if ((isDifferentModel || !replayReasoning) && itemId?.startsWith("fc_")) {
 						itemId = undefined;
 					}
 
