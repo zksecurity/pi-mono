@@ -117,6 +117,7 @@ This is a fork. `zkao` is our long-lived working branch and is periodically reba
 | `zkao-v0.80.2-backup` | v0.80.2 | 2026-07-08 | Snapshot before rebasing onto `main` (v0.80.3); re-resolved the `agent.ts` `prepareNextTurn` conflict; includes the `streamProxy` fix that relays `nativeTools` (native web search was silently dropped through the proxy) |
 | `zkao-v0.80.3-backup` | v0.80.3 | 2026-07-09 | Snapshot before rebasing onto `main` (v0.80.6, which adds the GPT-5.6 luna/sol/terra models); dropped our signed empty-thinking implementation (upstream absorbed the same fix) and kept only its regression test |
 | `zkao-v0.80.6-backup` | v0.80.6 | 2026-07-14 | Snapshot before rebasing onto `main` (v0.80.7, which adds a codex session-id clamp); preserves the new Meta (Muse Spark) provider commit alongside every prior fork commit |
+| `zkao-v0.80.7-backup` | v0.80.7 | 2026-07-16 | Snapshot before rebasing onto `main` (v0.80.9); preserves the Meta Muse `replayReasoning` fix (skip replaying server-expiring reasoning items) alongside every prior fork commit |
 
 ## License
 
