@@ -2799,6 +2799,10 @@ async function generateModels() {
 			// Muse always reasons and rejects reasoning.effort "none"; off -> null
 			// tells the responses layer to omit the effort field by default.
 			thinkingLevelMap: { off: null },
+			// Muse's Responses endpoint server-references reasoning items (ignores
+			// store:false); replaying them 400s with "reasoning item not found or
+			// has expired" on long multi-turn sessions. Don't replay them.
+			compat: { replayReasoning: false },
 			reasoning: true,
 			input: ["text", "image"],
 			cost: { input: 1.25, output: 4.25, cacheRead: 0.125, cacheWrite: 0 },
