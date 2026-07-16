@@ -722,6 +722,8 @@ export interface OpenAIResponsesCompat {
 	supportsToolSearch?: boolean;
 	/** Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ explicit prompt caching). Older OpenAI models reject the parameter. Default: false. */
 	supportsExplicitPromptCacheMode?: boolean;
+	/** Whether prior reasoning items are replayed inline on subsequent turns. Default: true. */
+	replayReasoning?: boolean;
 }
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
