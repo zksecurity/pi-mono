@@ -1046,6 +1046,11 @@
           "type": "number",
           "description": "vLLM scheduler priority sent as the top-level priority request field. Lower values are handled earlier and the server default is 0. Only meaningful with --scheduling-policy priority. Off by default and not set on the generated catalog."
         },
+        "replayReasoning": {
+          "type": "boolean",
+          "description": "Whether to replay reasoning items. Disable for providers such as Meta Muse that expire server-referenced reasoning items.",
+          "default": true
+        },
         "supportsAdditionalTools": {
           "type": "boolean",
           "description": "Whether the model supports message-anchored additional_tools input items.",
