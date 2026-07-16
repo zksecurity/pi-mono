@@ -11,6 +11,7 @@ export const META_MODELS = {
 		provider: "meta",
 		baseUrl: "https://api.meta.ai/v1",
 		thinkingLevelMap: {"off":null},
+		compat: {"replayReasoning":false},
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
