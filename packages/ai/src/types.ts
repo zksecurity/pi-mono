@@ -762,6 +762,8 @@ export interface OpenAIResponsesCompat {
 	supportsExplicitPromptCacheMode?: boolean;
 	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
 	supportsMaxOutputTokens?: boolean;
+	/** Whether prior reasoning items are replayed inline on subsequent turns. Default: true. */
+	replayReasoning?: boolean;
 }
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
