@@ -130,6 +130,8 @@ export interface ConvertResponsesMessagesOptions {
 	supportsAdditionalTools?: boolean;
 	supportsToolSearch?: boolean;
 	toolOptions?: ConvertResponsesToolsOptions;
+	/** Whether to replay prior reasoning items inline. Default: true. */
+	replayReasoning?: boolean;
 }
 
 export interface ConvertResponsesToolsOptions {
@@ -158,6 +160,7 @@ export function convertResponsesMessages<TApi extends Api>(
 ): ResponseInput {
 	const normalizedContext = resolveTranscript(context, options?.supportsMidConvoSystemMessages);
 	const messages: ResponseInput = [];
+	const replayReasoning = options?.replayReasoning ?? true;
 
 	const normalizeIdPart = (part: string): string => {
 		const sanitized = part.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -270,7 +273,7 @@ export function convertResponsesMessages<TApi extends Api>(
 
 			for (const block of msg.content) {
 				if (block.type === "thinking") {
-					if (block.thinkingSignature) {
+					if (replayReasoning && block.thinkingSignature) {
 						const reasoningItem = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;
 						output.push(reasoningItem);
 					}
@@ -304,10 +307,8 @@ export function convertResponsesMessages<TApi extends Api>(
 					// For different-model messages, set id to undefined to avoid pairing validation.
 					// OpenAI tracks which fc_xxx IDs were paired with rs_xxx reasoning items.
 					// By omitting the id, we avoid triggering that validation (like cross-provider does).
-					// When replaying custom-tool calls as a function_call, also drop non-fc_* ids such as
-					// ctc_* custom-tool ids because function_call item ids must be fc_*.
 					if (
-						(isDifferentModel && itemId?.startsWith("fc_")) ||
+						((isDifferentModel || !replayReasoning) && itemId?.startsWith("fc_")) ||
 						(customInputProperty === undefined && !itemId?.startsWith("fc_"))
 					) {
 						itemId = undefined;
