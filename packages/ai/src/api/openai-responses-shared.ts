@@ -494,6 +494,46 @@ type ResponsesOutputSlot =
 
 type ToolCallOutputSlot = Extract<ResponsesOutputSlot, { type: "toolCall" }>;
 
+/**
+ * Flat USD cost per native web-search query, keyed by provider. Providers bill
+ * the server-side `web_search` tool per search, on top of tokens:
+ *   - OpenAI:    ~$0.01/call (default)
+ *   - xAI:       $5 / 1,000 calls   (https://docs.x.ai/developers/pricing)
+ *   - Meta Muse: $2.50 / 1,000 search queries (dev.meta.ai pricing)
+ */
+function webSearchUnitCost(provider: string): number {
+	switch (provider) {
+		case "xai":
+			return 0.005;
+		case "meta":
+			return 0.0025;
+		default:
+			return 0.01;
+	}
+}
+
+type WebSearchCallItem = { type?: string; action?: { type?: string } };
+
+/**
+ * Count billable web searches and their cost. Only `search` actions are billed
+ * as queries; `open_page`/`find` sub-actions (Meta browses pages as separate
+ * `web_search_call` items) are not. Items with no action type fall through and
+ * count, preserving behavior for providers that don't expose one. Accepts the
+ * raw response output (loosely typed since the SDK models each item variant).
+ */
+export function computeWebSearchCost(
+	output: readonly unknown[] | undefined,
+	provider: string,
+): { count: number; cost: number } {
+	const count = (output ?? []).filter((raw) => {
+		const item = raw as WebSearchCallItem;
+		if (item.type !== "web_search_call") return false;
+		const actionType = item.action?.type;
+		return actionType === undefined || actionType === "search";
+	}).length;
+	return { count, cost: count * webSearchUnitCost(provider) };
+}
+
 export async function processResponsesStream<TApi extends Api>(
 	openaiStream: AsyncIterable<ResponseStreamEvent>,
 	output: AssistantMessage,
@@ -638,10 +678,10 @@ export async function processResponsesStream<TApi extends Api>(
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			};
 		}
-		const wsCount = response?.output?.filter((item: any) => item.type === "web_search_call").length ?? 0;
-		if (wsCount > 0) {
-			output.usage.extras = { webSearch: wsCount };
-			output.usage.cost.extras = { webSearch: wsCount * 0.01 };
+		const webSearch = computeWebSearchCost(response?.output, model.provider);
+		if (webSearch.count > 0) {
+			output.usage.extras = { webSearch: webSearch.count };
+			output.usage.cost.extras = { webSearch: webSearch.cost };
 		}
 		calculateCost(model, output.usage);
 		if (options?.applyServiceTierPricing) {
