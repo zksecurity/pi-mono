@@ -66,6 +66,7 @@ export type KnownProvider =
 	| "fireworks"
 	| "together"
 	| "baseten"
+	| "deepinfra"
 	| "opencode"
 	| "opencode-go"
 	| "kimi-coding"
