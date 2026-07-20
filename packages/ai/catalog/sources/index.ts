@@ -4,6 +4,7 @@ import {
 	loadRadiusGatewayConfig,
 } from "../../src/providers/radius-config.ts";
 import type { Model } from "../../src/types.ts";
+import { fetchDeepInfraModels } from "./deepinfra.ts";
 import {
 	MODELS_DEV_DECISIONS_URL,
 	MODELS_DEV_URL,
@@ -24,6 +25,7 @@ export interface CatalogSources {
 	/** Live NVIDIA NIM ids, keyed by both the raw and the normalized id. */
 	nvidiaModelIds: Map<string, string>;
 	radius: Model<"pi-messages">[];
+	deepinfra: Model<"openai-completions">[];
 }
 
 async function fetchJson<T>(url: string, label: string): Promise<T> {
@@ -90,6 +92,7 @@ export async function loadCatalogSources(strict: boolean): Promise<CatalogSource
 	if (strict && openRouter.images.length === 0) throw new Error("OpenRouter API returned no usable image models");
 	const aiGateway = await load("Vercel AI Gateway models", fetchAiGatewayCatalog, { chat: [], classifiers: [] });
 	const radius = await load("Radius models", fetchRadiusModels, []);
+	const deepinfra = await load("DeepInfra models", fetchDeepInfraModels, []);
 
-	return { modelsDev, modelsDevDecisions, openRouter, aiGateway, nvidiaModelIds, radius };
+	return { modelsDev, modelsDevDecisions, openRouter, aiGateway, nvidiaModelIds, radius, deepinfra };
 }
