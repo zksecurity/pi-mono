@@ -109,6 +109,8 @@ const KIMI_STATIC_HEADERS = {
 	"User-Agent": "KimiCLI/1.5",
 } as const;
 
+const DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai";
+
 const TOGETHER_BASE_URL = "https://api.together.ai/v1";
 const TOGETHER_BASE_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
@@ -457,6 +459,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
 	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
+	const isDeepInfra = provider === "deepinfra" || baseUrl.includes("api.deepinfra.com");
 	const isTogetherReasoningOnly = isTogether && TOGETHER_REASONING_ONLY_MODELS.has(model.id);
 
 	const isNonStandard =
@@ -474,10 +477,17 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		baseUrl.includes("opencode.ai") ||
 		isCloudflareWorkersAI ||
 		isCloudflareAiGateway ||
-		isAntLing;
+		isAntLing ||
+		isDeepInfra;
 
 	const useMaxTokens =
-		baseUrl.includes("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing;
+		baseUrl.includes("chutes.ai") ||
+		isMoonshot ||
+		isCloudflareAiGateway ||
+		isTogether ||
+		isNvidia ||
+		isAntLing ||
+		isDeepInfra;
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
 	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
@@ -519,7 +529,8 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 			isCloudflareWorkersAI ||
 			isCloudflareAiGateway ||
 			isNvidia ||
-			isAntLing
+			isAntLing ||
+			isDeepInfra
 		),
 	};
 }
@@ -870,6 +881,73 @@ async function fetchAiGatewayModels(): Promise<Model<any>[]> {
 		return models;
 	} catch (error) {
 		console.error("Failed to fetch Vercel AI Gateway models:", error);
+		if (generatorOptions.strict) throw error;
+		return [];
+	}
+}
+
+interface DeepInfraModel {
+	id: string;
+	metadata?: {
+		context_length?: number;
+		max_tokens?: number;
+		pricing?: {
+			input_tokens?: number;
+			output_tokens?: number;
+			cache_read_tokens?: number | null;
+		};
+		tags?: string[];
+	};
+}
+
+async function fetchDeepInfraModels(): Promise<Model<any>[]> {
+	try {
+		console.log("Fetching models from DeepInfra API...");
+		const response = await fetch(`${DEEPINFRA_BASE_URL}/models`);
+		if (!response.ok) throw new Error(`DeepInfra API returned ${response.status}`);
+		const data = await response.json();
+		const models: Model<any>[] = [];
+
+		const items = Array.isArray(data.data) ? (data.data as DeepInfraModel[]) : [];
+		for (const model of items) {
+			const meta = model.metadata;
+			if (!meta) continue;
+			const tags = Array.isArray(meta.tags) ? meta.tags : [];
+			// Text chat models only; skips embedding, speech, image, and video endpoints.
+			if (!tags.includes("chat")) continue;
+
+			const input: ("text" | "image")[] = ["text"];
+			if (tags.includes("vision")) input.push("image");
+
+			const contextWindow = meta.context_length || 4096;
+
+			models.push({
+				id: model.id,
+				name: model.id.split("/").pop() || model.id,
+				api: "openai-completions",
+				baseUrl: DEEPINFRA_BASE_URL,
+				provider: "deepinfra",
+				reasoning: tags.includes("reasoning"),
+				input,
+				cost: {
+					// DeepInfra already reports prices per million tokens.
+					input: roundCost(meta.pricing?.input_tokens ?? 0),
+					output: roundCost(meta.pricing?.output_tokens ?? 0),
+					cacheRead: roundCost(meta.pricing?.cache_read_tokens ?? 0),
+					cacheWrite: 0,
+				},
+				contextWindow,
+				// DeepInfra mirrors context_length into max_tokens; clamp so output never exceeds context.
+				maxTokens: Math.min(meta.max_tokens || contextWindow, contextWindow),
+				// Only models tagged `reasoning_effort` accept the parameter; the rest reason unconditionally.
+				compat: { supportsReasoningEffort: tags.includes("reasoning_effort") },
+			});
+		}
+
+		console.log(`Fetched ${models.length} chat models from DeepInfra`);
+		return models;
+	} catch (error) {
+		console.error("Failed to fetch DeepInfra models:", error);
 		if (generatorOptions.strict) throw error;
 		return [];
 	}
@@ -1777,9 +1855,10 @@ async function generateModels() {
 	const modelsDevModels = await loadModelsDevData();
 	const openRouterModels = await fetchOpenRouterModels();
 	const aiGatewayModels = await fetchAiGatewayModels();
+	const deepInfraModels = await fetchDeepInfraModels();
 
 	// Combine models (models.dev has priority)
-	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels].filter(
+	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels, ...deepInfraModels].filter(
 		(model) =>
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
 	);
