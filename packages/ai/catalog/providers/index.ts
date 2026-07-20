@@ -9,6 +9,7 @@ import baseten from "./baseten.ts";
 import cerebras from "./cerebras.ts";
 import cloudflareAiGateway from "./cloudflare-ai-gateway.ts";
 import cloudflareWorkersAi from "./cloudflare-workers-ai.ts";
+import deepinfra from "./deepinfra.ts";
 import deepseek from "./deepseek.ts";
 import fireworks from "./fireworks.ts";
 import githubCopilot from "./github-copilot.ts";
@@ -53,6 +54,7 @@ export const PROVIDERS: readonly ProviderDefinition[] = [
 	cerebras,
 	cloudflareAiGateway,
 	cloudflareWorkersAi,
+	deepinfra,
 	deepseek,
 	fireworks,
 	githubCopilot,
