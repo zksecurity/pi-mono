@@ -170,6 +170,8 @@ const COPILOT_STATIC_HEADERS = {
 	"Copilot-Integration-Id": "vscode-chat",
 } as const;
 
+const DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai";
+
 const TOGETHER_BASE_URL = "https://api.together.ai/v1";
 const TOGETHER_BASE_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
@@ -704,6 +706,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
 	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
 	const isCerebras = provider === "cerebras" || baseUrl.includes("cerebras.ai");
+	const isDeepInfra = provider === "deepinfra" || baseUrl.includes("api.deepinfra.com");
 	const isTogetherReasoningOnly = isTogether && TOGETHER_REASONING_ONLY_MODELS.has(model.id);
 	const isDeepSeek = provider === "deepseek" || baseUrl.toLowerCase().includes("deepseek.com");
 
@@ -721,7 +724,8 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		baseUrl.includes("opencode.ai") ||
 		isCloudflareWorkersAI ||
 		isCloudflareAiGateway ||
-		isAntLing;
+		isAntLing ||
+		isDeepInfra;
 
 	const useMaxTokens =
 		baseUrl.includes("chutes.ai") ||
@@ -731,7 +735,8 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		isTogether ||
 		isNvidia ||
 		isAntLing ||
-		isZai;
+		isZai ||
+		isDeepInfra;
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
 	const isOpenRouterDeveloperRoleModel =
@@ -779,7 +784,8 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 			isCloudflareWorkersAI ||
 			isCloudflareAiGateway ||
 			isNvidia ||
-			isAntLing
+			isAntLing ||
+			isDeepInfra
 		),
 	};
 }
@@ -1751,6 +1757,73 @@ function processFireworksModels(provider: ModelsDevProvider | undefined): Model<
 	}
 
 	return models;
+}
+
+interface DeepInfraModel {
+	id: string;
+	metadata?: {
+		context_length?: number;
+		max_tokens?: number;
+		pricing?: {
+			input_tokens?: number;
+			output_tokens?: number;
+			cache_read_tokens?: number | null;
+		};
+		tags?: string[];
+	};
+}
+
+async function fetchDeepInfraModels(): Promise<Model<any>[]> {
+	try {
+		console.log("Fetching models from DeepInfra API...");
+		const response = await fetch(`${DEEPINFRA_BASE_URL}/models`);
+		if (!response.ok) throw new Error(`DeepInfra API returned ${response.status}`);
+		const data = await response.json();
+		const models: Model<any>[] = [];
+
+		const items = Array.isArray(data.data) ? (data.data as DeepInfraModel[]) : [];
+		for (const model of items) {
+			const meta = model.metadata;
+			if (!meta) continue;
+			const tags = Array.isArray(meta.tags) ? meta.tags : [];
+			// Text chat models only; skips embedding, speech, image, and video endpoints.
+			if (!tags.includes("chat")) continue;
+
+			const input: ("text" | "image")[] = ["text"];
+			if (tags.includes("vision")) input.push("image");
+
+			const contextWindow = meta.context_length || 4096;
+
+			models.push({
+				id: model.id,
+				name: model.id.split("/").pop() || model.id,
+				api: "openai-completions",
+				baseUrl: DEEPINFRA_BASE_URL,
+				provider: "deepinfra",
+				reasoning: tags.includes("reasoning"),
+				input,
+				cost: {
+					// DeepInfra already reports prices per million tokens.
+					input: roundCost(meta.pricing?.input_tokens ?? 0),
+					output: roundCost(meta.pricing?.output_tokens ?? 0),
+					cacheRead: roundCost(meta.pricing?.cache_read_tokens ?? 0),
+					cacheWrite: 0,
+				},
+				contextWindow,
+				// DeepInfra mirrors context_length into max_tokens; clamp so output never exceeds context.
+				maxTokens: Math.min(meta.max_tokens || contextWindow, contextWindow),
+				// Only models tagged `reasoning_effort` accept the parameter; the rest reason unconditionally.
+				compat: { supportsReasoningEffort: tags.includes("reasoning_effort") },
+			});
+		}
+
+		console.log(`Fetched ${models.length} chat models from DeepInfra`);
+		return models;
+	} catch (error) {
+		console.error("Failed to fetch DeepInfra models:", error);
+		if (generatorOptions.strict) throw error;
+		return [];
+	}
 }
 
 async function loadModelsDevData(): Promise<Model<any>[]> {
@@ -2763,9 +2836,16 @@ async function generateModels() {
 	const openRouterCatalog = await fetchOpenRouterModels();
 	const aiGatewayCatalog = await fetchAiGatewayModels();
 	const radiusModels = await fetchRadiusModels();
+	const deepInfraModels = await fetchDeepInfraModels();
 
 	// Combine chat models (models.dev has priority where sources overlap).
-	const allModels = [...modelsDevModels, ...openRouterCatalog.chat, ...aiGatewayCatalog.chat, ...radiusModels].filter(
+	const allModels = [
+		...modelsDevModels,
+		...openRouterCatalog.chat,
+		...aiGatewayCatalog.chat,
+		...radiusModels,
+		...deepInfraModels,
+	].filter(
 		(model) =>
 			!(model.provider === "xai" && XAI_BUILTIN_EXCLUDED_MODEL_IDS.has(model.id)) &&
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
