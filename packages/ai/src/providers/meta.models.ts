@@ -17,7 +17,7 @@ export const META_MODELS = {
 		cost: {
 			input: 1.25,
 			output: 4.25,
-			cacheRead: 0.125,
+			cacheRead: 0.15,
 			cacheWrite: 0,
 		},
 		contextWindow: 1048576,
