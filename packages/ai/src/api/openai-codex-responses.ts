@@ -675,7 +675,7 @@ async function processStream(
 	grammarToolInputProperties: ReadonlyMap<string, string>,
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
-let sawCompletion = false;
+	let sawCompletion = false;
 	const trackCompletion = async function* (
 		events: AsyncIterable<ResponseStreamEvent>,
 	): AsyncGenerator<ResponseStreamEvent> {

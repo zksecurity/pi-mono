@@ -1,4 +1,3 @@
-import { assertNoNativeToolNameCollision } from "@earendil-works/pi-ai";
 import type {
 	ImageContent,
 	Message,
@@ -9,6 +8,7 @@ import type {
 	ThinkingBudgets,
 	Transport,
 } from "@earendil-works/pi-ai";
+import { assertNoNativeToolNameCollision } from "@earendil-works/pi-ai";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
