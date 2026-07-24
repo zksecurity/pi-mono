@@ -52,6 +52,7 @@ export const MODELS: {
 	readonly "cerebras": typeof CEREBRAS_MODELS;
 	readonly "cloudflare-ai-gateway": typeof CLOUDFLARE_AI_GATEWAY_MODELS;
 	readonly "cloudflare-workers-ai": typeof CLOUDFLARE_WORKERS_AI_MODELS;
+	readonly "deepinfra": typeof DEEPINFRA_MODELS;
 	readonly "deepseek": typeof DEEPSEEK_MODELS;
 	readonly "fireworks": typeof FIREWORKS_MODELS;
 	readonly "github-copilot": typeof GITHUB_COPILOT_MODELS;
@@ -60,6 +61,7 @@ export const MODELS: {
 	readonly "groq": typeof GROQ_MODELS;
 	readonly "huggingface": typeof HUGGINGFACE_MODELS;
 	readonly "kimi-coding": typeof KIMI_CODING_MODELS;
+	readonly "meta": typeof META_MODELS;
 	readonly "minimax": typeof MINIMAX_MODELS;
 	readonly "minimax-cn": typeof MINIMAX_CN_MODELS;
 	readonly "mistral": typeof MISTRAL_MODELS;
