@@ -737,12 +737,13 @@ describe("Agent", () => {
 					tools: [{ name: "web_search", description: "shadow" } as any],
 				},
 				nativeTools: { webSearch: true },
+				streamFn: unusedStreamFunction,
 			});
 		}).toThrow(/web_search/);
 	});
 
 	it("throws when assigning a colliding tool to state.tools", () => {
-		const agent = new Agent({ nativeTools: { webSearch: true } });
+		const agent = new Agent({ nativeTools: { webSearch: true }, streamFn: unusedStreamFunction });
 		expect(() => {
 			agent.state.tools = [{ name: "web_search", description: "shadow" } as any];
 		}).toThrow(/web_search/);
@@ -754,6 +755,7 @@ describe("Agent", () => {
 				initialState: {
 					tools: [{ name: "web_search", description: "ok" } as any],
 				},
+				streamFn: unusedStreamFunction,
 			});
 		}).not.toThrow();
 	});
