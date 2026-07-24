@@ -523,7 +523,9 @@ function buildParams(
 
 	config.toolConfig = buildGoogleToolConfig({
 		functionCallingMode,
+		hasFunctionTools: !!context.tools?.length,
 		hasBuiltInTool: !!googleSearch,
+		toolChoice: options.toolChoice,
 	});
 
 	if (options.thinking?.enabled && model.reasoning) {
