@@ -399,7 +399,6 @@ export function convertGoogleSearchTool(
 	return { googleSearch };
 }
 
-
 /**
  * Apply a streamed server-side built-in tool part (Gemini `toolCall` / `toolResponse`)
  * to the assistant content array. Call and response parts are paired into a single
@@ -459,11 +458,16 @@ export function applyServerToolPart(
  */
 export function buildGoogleToolConfig(opts: {
 	functionCallingMode?: FunctionCallingConfigMode;
+	hasFunctionTools: boolean;
 	hasBuiltInTool: boolean;
+	toolChoice?: string;
 }): ToolConfig | undefined {
 	const includeServerSide = opts.hasBuiltInTool;
 	let mode = opts.functionCallingMode;
-	if (includeServerSide && (mode === undefined || mode === FunctionCallingConfigMode.AUTO)) {
+	if (mode === undefined && opts.hasFunctionTools && opts.toolChoice) {
+		mode = mapToolChoice(opts.toolChoice);
+	}
+	if (includeServerSide && opts.hasFunctionTools && (mode === undefined || mode === FunctionCallingConfigMode.AUTO)) {
 		mode = FunctionCallingConfigMode.VALIDATED;
 	}
 	const functionCallingConfig: { mode?: FunctionCallingConfigMode } = { mode };
