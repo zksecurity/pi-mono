@@ -745,7 +745,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
 					const wsCount =
-						(event.usage as { server_tool_use?: { web_search_requests?: number } }).server_tool_use
+						(event.usage as { server_tool_use?: { web_search_requests?: number } } | undefined)?.server_tool_use
 							?.web_search_requests ?? 0;
 					if (wsCount > 0) {
 						output.usage.extras = { webSearch: wsCount };
