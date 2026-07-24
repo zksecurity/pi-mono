@@ -120,6 +120,7 @@ This is a fork. `zkao` is our long-lived working branch and is periodically reba
 | `zkao-v0.80.6-backup` | v0.80.6 | 2026-07-14 | Snapshot before rebasing onto `main` (v0.80.7, which adds a codex session-id clamp); preserves the new Meta (Muse Spark) provider commit alongside every prior fork commit |
 | `zkao-v0.80.7-backup` | v0.80.7 | 2026-07-16 | Snapshot before rebasing onto `main` (v0.80.9); preserves the Meta Muse `replayReasoning` fix (skip replaying server-expiring reasoning items) alongside every prior fork commit |
 | `zkao-v0.80.9-backup` | v0.80.9 | 2026-07-20 | Snapshot before rebasing onto `main` (v0.80.10); preserves the native web-search pricing fix (xAI/Meta) and the new DeepInfra provider alongside every prior fork commit |
+| `zkao-v0.80.10-backup` | v0.80.10 | 2026-07-24 | Snapshot before rebasing onto `main` (v0.82.0); dropped the OpenCode Go API-widening commit absorbed upstream and re-resolved native web-search, Gemini combined-tool, Meta reasoning-replay, and DeepInfra conflicts |
 
 ## License
 
