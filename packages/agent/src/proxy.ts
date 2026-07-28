@@ -11,6 +11,7 @@ import {
 	EventStream,
 	type Model,
 	parseStreamingJson,
+	type ServerToolUse,
 	type SimpleStreamOptions,
 	type StopReason,
 	type ToolCall,
@@ -44,6 +45,8 @@ export type ProxyAssistantMessageEvent =
 	| { type: "toolcall_start"; contentIndex: number; id: string; toolName: string }
 	| { type: "toolcall_delta"; contentIndex: number; delta: string }
 	| { type: "toolcall_end"; contentIndex: number }
+	/** Provider-executed tool block, sent whole — see the `servertooluse` AssistantMessageEvent. */
+	| { type: "servertooluse"; contentIndex: number; block: ServerToolUse }
 	| {
 			type: "done";
 			reason: Extract<StopReason, "stop" | "length" | "toolUse">;
@@ -347,6 +350,12 @@ function processProxyEvent(
 			}
 			return undefined;
 		}
+
+		case "servertooluse":
+			// Fires once for the call and again once its result arrives; the block is
+			// authoritative each time, so overwrite the slot rather than merging.
+			partial.content[proxyEvent.contentIndex] = proxyEvent.block;
+			return { type: "servertooluse", contentIndex: proxyEvent.contentIndex, block: proxyEvent.block, partial };
 
 		case "done":
 			partial.stopReason = proxyEvent.reason;
