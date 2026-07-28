@@ -238,8 +238,9 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 						}
 
 						// Server-side built-in tool calls (e.g. google_search grounding combined with
-						// function calling). Recorded in content for verbatim replay; the model executes
-						// them itself, so they are not surfaced as streaming tool-call events.
+						// function calling). Recorded in content for verbatim replay. The model executes
+						// them itself, so they raise no tool-call events — but they are announced via
+						// `servertooluse` so consumers rebuilding from events keep them.
 						if (part.toolCall || part.toolResponse) {
 							if (currentBlock) {
 								if (currentBlock.type === "text") {
@@ -259,7 +260,9 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 								}
 								currentBlock = null;
 							}
-							applyServerToolPart(output.content, part);
+							applyServerToolPart(output.content, part, (contentIndex, block) =>
+								stream.push({ type: "servertooluse", contentIndex, block, partial: output }),
+							);
 						}
 					}
 				}
