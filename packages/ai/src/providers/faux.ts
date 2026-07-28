@@ -6,6 +6,7 @@ import type {
 	ImageContent,
 	Message,
 	Model,
+	ServerToolUse,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
@@ -44,7 +45,7 @@ export interface FauxModelDefinition {
 	maxTokens?: number;
 }
 
-export type FauxContentBlock = TextContent | ThinkingContent | ToolCall;
+export type FauxContentBlock = TextContent | ThinkingContent | ToolCall | ServerToolUse;
 
 export function fauxText(text: string): TextContent {
 	return { type: "text", text };
@@ -52,6 +53,19 @@ export function fauxText(text: string): TextContent {
 
 export function fauxThinking(thinking: string): ThinkingContent {
 	return { type: "thinking", thinking };
+}
+
+/**
+ * A provider-executed tool record, e.g. an Anthropic `web_search` call paired with its
+ * result. `response` holds the provider's raw result payload, replayed verbatim.
+ */
+export function fauxServerToolUse(
+	toolType: string,
+	args: Record<string, any>,
+	response?: Record<string, any>,
+	id = randomId("srvtoolu"),
+): ServerToolUse {
+	return { type: "serverToolUse", id, toolType, args, ...(response ? { response } : {}) };
 }
 
 export function fauxToolCall(name: string, arguments_: ToolCall["arguments"], options: { id?: string } = {}): ToolCall {
@@ -337,8 +351,11 @@ async function streamWithDeltas(
 		const block = message.content[index];
 
 		if (block.type === "serverToolUse") {
-			// Provider-executed tool record; replay verbatim without streaming sub-events.
+			// Provider-executed tool record: the provider ran the tool, so there are no
+			// sub-events to stream. The block is still announced, or consumers that rebuild
+			// content from events (every proxy) leave a hole at this index and lose it.
 			partial.content = [...partial.content, block];
+			stream.push({ type: "servertooluse", contentIndex: index, block, partial: { ...partial } });
 			continue;
 		}
 
