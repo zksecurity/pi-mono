@@ -438,32 +438,48 @@ export interface ToolCall {
 
 /**
  * A provider-executed (server-side) built-in tool invocation, e.g. Gemini's
- * `google_search` grounding when combined with client-side function calling.
+ * `google_search` grounding or Anthropic's `web_search`.
  *
  * Unlike `ToolCall`, the provider runs the tool itself and returns both the call
- * and its result inline within the model's turn. Gemini's "tool context
- * circulation" (enabled via `tool_config.include_server_side_tool_invocations`)
- * requires these parts to be replayed verbatim — including their thought
- * signatures — on every subsequent turn, or the API rejects the request. We
- * therefore capture each call/response pair so the Google providers can round-trip
- * it. Other providers ignore these blocks.
+ * and its result inline within the model's turn. Both providers validate the
+ * assistant turn they get handed back, so these blocks must be replayed verbatim
+ * on every subsequent turn:
+ *
+ * - Gemini's "tool context circulation" (enabled via
+ *   `tool_config.include_server_side_tool_invocations`) requires the call/response
+ *   parts together with their thought signatures.
+ * - Anthropic requires the `server_tool_use` / `*_tool_result` block pair. Dropping
+ *   it can leave two `thinking` blocks adjacent, which the Messages API rejects with
+ *   "`thinking` or `redacted_thinking` blocks in the latest assistant message cannot
+ *   be modified".
+ *
+ * We therefore capture each call/response pair so the originating provider can
+ * round-trip it. Other providers ignore these blocks.
  *
  * See: https://ai.google.dev/gemini-api/docs/tool-combination
+ * See: https://docs.claude.com/en/docs/agents-and-tools/tool-use/web-search-tool
  */
 export interface ServerToolUse {
 	type: "serverToolUse";
 	/** Unique id linking the server-side call to its response. */
 	id?: string;
-	/** Provider tool identifier, e.g. "GOOGLE_SEARCH_WEB". */
+	/** Provider tool identifier, e.g. "GOOGLE_SEARCH_WEB" (Gemini) or "web_search" (Anthropic). */
 	toolType?: string;
-	/** Arguments from the server-side toolCall part (e.g. search queries). */
+	/** Arguments from the server-side call (e.g. search queries). */
 	args?: Record<string, any>;
-	/** Result from the server-side toolResponse part. */
+	/**
+	 * Result of the server-side call. Gemini stores its `toolResponse.response`
+	 * object; Anthropic stores the entire raw result block (`web_search_tool_result`
+	 * and friends, including `type` and `tool_use_id`) so it can be echoed back
+	 * unmodified.
+	 */
 	response?: Record<string, any>;
-	/** thoughtSignature attached to the toolCall part. */
+	/** thoughtSignature attached to the toolCall part (Gemini). */
 	callSignature?: string;
-	/** thoughtSignature attached to the toolResponse part. */
+	/** thoughtSignature attached to the toolResponse part (Gemini). */
 	responseSignature?: string;
+	/** Anthropic's `caller` field on the `server_tool_use` block, echoed back verbatim. */
+	caller?: unknown;
 }
 
 export interface Usage {
@@ -632,6 +648,16 @@ export type AssistantMessageEvent =
 	| { type: "toolcall_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "toolcall_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
 	| { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage }
+	/**
+	 * A provider-executed built-in tool block landed in `content`. Emitted whole rather
+	 * than as start/delta/end because the provider runs the tool itself and there is no
+	 * client-side work to stream. May fire twice for the same `contentIndex`: once when
+	 * the call is complete and again when its result arrives; the block is authoritative
+	 * each time. Consumers that replay content by index must honor it, or the slot is
+	 * left as a hole and the block is lost — see `ServerToolUse` for why losing it breaks
+	 * the next request.
+	 */
+	| { type: "servertooluse"; contentIndex: number; block: ServerToolUse; partial: AssistantMessage }
 	| {
 			type: "done";
 			reason: Extract<StopReason, "stop" | "length" | "toolUse" | "deferred">;
