@@ -381,40 +381,52 @@ export function convertGoogleSearchTool(
  * response) so the pair can be replayed verbatim on later turns. Returns true when the
  * part was a server-side tool part and has been consumed.
  *
+ * `onBlock` reports the content index the block landed at, so callers can emit the
+ * `servertooluse` event. It fires for both halves of the pair (same index each time).
+ * Skipping it leaves consumers that rebuild content from events with a hole at that
+ * index, silently losing the block.
+ *
  * See https://ai.google.dev/gemini-api/docs/tool-combination — these parts, and their
  * thought signatures, must be circulated back on every subsequent turn or the API errors.
  */
 export function applyServerToolPart(
 	content: (TextContent | ThinkingContent | ToolCall | ServerToolUse)[],
 	part: Pick<Part, "toolCall" | "toolResponse" | "thoughtSignature">,
+	onBlock?: (contentIndex: number, block: ServerToolUse) => void,
 ): boolean {
 	if (part.toolCall) {
-		content.push({
+		const block: ServerToolUse = {
 			type: "serverToolUse",
 			...(part.toolCall.id && { id: part.toolCall.id }),
 			...(part.toolCall.toolType && { toolType: String(part.toolCall.toolType) }),
 			...(part.toolCall.args && { args: part.toolCall.args as Record<string, any> }),
 			...(part.thoughtSignature && { callSignature: part.thoughtSignature }),
-		});
+		};
+		content.push(block);
+		onBlock?.(content.length - 1, block);
 		return true;
 	}
 	if (part.toolResponse) {
 		const id = part.toolResponse.id;
 		let block: ServerToolUse | undefined;
+		let index = -1;
 		for (let i = content.length - 1; i >= 0; i--) {
 			const candidate = content[i];
 			if (candidate.type === "serverToolUse" && candidate.response === undefined && (!id || candidate.id === id)) {
 				block = candidate;
+				index = i;
 				break;
 			}
 		}
 		if (!block) {
 			block = { type: "serverToolUse", ...(id ? { id } : {}) };
 			content.push(block);
+			index = content.length - 1;
 		}
 		if (part.toolResponse.toolType && !block.toolType) block.toolType = String(part.toolResponse.toolType);
 		if (part.toolResponse.response) block.response = part.toolResponse.response as Record<string, any>;
 		if (part.thoughtSignature) block.responseSignature = part.thoughtSignature;
+		onBlock?.(index, block);
 		return true;
 	}
 	return false;
