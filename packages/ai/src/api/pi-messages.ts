@@ -16,6 +16,7 @@ import type {
 	Context,
 	Model,
 	ProviderEnv,
+	ServerToolUse,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
@@ -66,6 +67,8 @@ export type PiMessagesEvent =
 	| { type: "toolcall_start"; contentIndex: number; id: string; toolName: string }
 	| { type: "toolcall_delta"; contentIndex: number; delta: string }
 	| { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall }
+	/** Provider-executed tool block, sent whole — see the `servertooluse` AssistantMessageEvent. */
+	| { type: "servertooluse"; contentIndex: number; block: ServerToolUse }
 	| {
 			type: "done";
 			reason: Extract<PiMessagesStopReason, "stop" | "length" | "toolUse">;
@@ -265,6 +268,11 @@ function createEventConverter(model: Model<"pi-messages">) {
 					toolCall: partial.content[event.contentIndex] as ToolCall,
 					partial,
 				};
+			case "servertooluse":
+				// Fires once for the call and again once its result arrives; the block is
+				// authoritative each time, so overwrite the slot rather than merging.
+				partial.content[event.contentIndex] = event.block;
+				break;
 		}
 
 		return { ...event, partial } as AssistantMessageEvent;
