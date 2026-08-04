@@ -44,6 +44,7 @@ import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import {
 	convertResponsesMessages,
 	convertResponsesTools,
+	getOpenAIErrorRefusal,
 	getResponsesToolSupport,
 	processResponsesStream,
 } from "./openai-responses-shared.ts";
@@ -458,7 +459,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						statusText: response.statusText,
 					});
 					const info = await parseErrorResponse(fakeResponse);
-					throw new Error(info.friendlyMessage || info.message);
+					throw new CodexApiError(info.friendlyMessage || info.message, { code: info.code });
 				} catch (error) {
 					if (error instanceof Error) {
 						if (error.name === "AbortError" || error.message === "Request was aborted") {
@@ -503,6 +504,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			stream.end();
 		} catch (error) {
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+			output.refusal ??= getOpenAIErrorRefusal(error);
 			output.errorMessage = formatProviderError(normalizeProviderError(error));
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
@@ -801,6 +803,7 @@ async function* mapCodexEvents(
 		if (!type) continue;
 
 		if (type === "error") {
+			output.refusal ??= getOpenAIErrorRefusal(event);
 			const { code, message } = extractCodexEventError(event);
 			throw new CodexApiError(`Codex error: ${message || code || JSON.stringify(event)}`, {
 				code,
@@ -810,6 +813,8 @@ async function* mapCodexEvents(
 
 		if (type === "response.failed") {
 			const response = (event as { response?: { error?: { code?: string; message?: string } } }).response;
+			output.rawStopReason = "failed";
+			output.refusal ??= getOpenAIErrorRefusal(response?.error);
 			const code = response?.error?.code;
 			const message = response?.error?.message;
 			throw new CodexApiError(message || "Codex response failed", { code, payload: event });
@@ -817,6 +822,13 @@ async function* mapCodexEvents(
 
 		if (type === "response.done" || type === "response.completed" || type === "response.incomplete") {
 			const response = (event as { response?: { status?: unknown; end_turn?: unknown } }).response;
+			if (
+				typeof response?.status === "string" &&
+				!CODEX_RESPONSE_STATUSES.has(response.status as CodexResponseStatus)
+			) {
+				output.rawStopReason = response.status;
+				throw new CodexApiError(`Provider stopped with: ${response.status}`, { payload: event });
+			}
 			if (typeof response?.end_turn === "boolean") {
 				output.endTurn = response.end_turn;
 			}
@@ -1660,10 +1672,13 @@ async function processWebSocketStream(
 // Error Handling
 // ============================================================================
 
-async function parseErrorResponse(response: Response): Promise<{ message: string; friendlyMessage?: string }> {
+async function parseErrorResponse(
+	response: Response,
+): Promise<{ message: string; friendlyMessage?: string; code?: string }> {
 	const raw = await response.text();
 	let message = raw || response.statusText || "Request failed";
 	let friendlyMessage: string | undefined;
+	let code: string | undefined;
 
 	try {
 		const parsed = JSON.parse(raw) as {
@@ -1671,8 +1686,11 @@ async function parseErrorResponse(response: Response): Promise<{ message: string
 		};
 		const err = parsed?.error;
 		if (err) {
-			const code = err.code || err.type || "";
-			if (/usage_limit_reached|usage_not_included|rate_limit_exceeded/i.test(code) || response.status === 429) {
+			code = err.code || err.type;
+			if (
+				/usage_limit_reached|usage_not_included|rate_limit_exceeded/i.test(code ?? "") ||
+				response.status === 429
+			) {
 				const plan = err.plan_type ? ` (${err.plan_type.toLowerCase()} plan)` : "";
 				const mins = err.resets_at
 					? Math.max(0, Math.round((err.resets_at * 1000 - Date.now()) / 60000))
@@ -1684,7 +1702,7 @@ async function parseErrorResponse(response: Response): Promise<{ message: string
 		}
 	} catch {}
 
-	return { message, friendlyMessage };
+	return { message, friendlyMessage, code };
 }
 
 // ============================================================================

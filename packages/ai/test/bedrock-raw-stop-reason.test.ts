@@ -112,6 +112,22 @@ describe("Bedrock provider stream events", () => {
 });
 
 describe("Bedrock raw stop reasons", () => {
+	it.each(["content_filtered", "guardrail_intervened"])("preserves the native refusal %s", async (reason) => {
+		bedrockMock.stopReason = reason;
+		const message = await streamBedrock(model, context, { cacheRetention: "none" }).result();
+		expect(message.stopReason).toBe("error");
+		expect(message.rawStopReason).toBe(reason);
+		expect(message.refusal).toEqual({ source: "stop_reason", raw: reason });
+	});
+
+	it("keeps unknown stop reasons as ordinary errors", async () => {
+		bedrockMock.stopReason = "future_reason";
+		const message = await streamBedrock(model, context, { cacheRetention: "none" }).result();
+		expect(message.stopReason).toBe("error");
+		expect(message.rawStopReason).toBe("future_reason");
+		expect(message.errorMessage).toBe("Provider stopped with: future_reason");
+		expect(message.refusal).toBeUndefined();
+	});
 	it("preserves raw Bedrock stop reasons for successful stops", async () => {
 		bedrockMock.stopReason = "end_turn";
 
