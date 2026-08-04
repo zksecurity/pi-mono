@@ -1487,8 +1487,16 @@ function mapStopReason(
 			return { stopReason: "stop" };
 		case "stop_sequence":
 			return { stopReason: "stop" }; // We don't supply stop sequences, so this should never happen
-		case "sensitive": // Content flagged by safety filters (not yet in SDK types)
-			return { stopReason: "error" };
+		case "sensitive":
+			// Content flagged by safety filters (not yet in SDK types). Distinct from
+			// "refusal" on the wire but the same class of failure, so give it an
+			// errorMessage: without one it surfaces as "An unknown error occurred"
+			// and refusal classification (utils/refusal.ts) has no text to match.
+			return {
+				stopReason: "error",
+				errorMessage:
+					stopDetails?.explanation || `The model refused to complete the request (content flagged as sensitive)`,
+			};
 		default:
 			// Handle unknown stop reasons gracefully (API may add new values)
 			throw new Error(`Unhandled stop reason: ${reason}`);
