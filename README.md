@@ -121,6 +121,7 @@ This is a fork. `zkao` is our long-lived working branch and is periodically reba
 | `zkao-v0.80.9-backup` | v0.80.9 | 2026-07-20 | Snapshot before rebasing onto `main` (v0.80.10); preserves the native web-search pricing fix (xAI/Meta) and the new DeepInfra provider alongside every prior fork commit |
 | `zkao-v0.80.10-backup` | v0.80.10 | 2026-07-24 | Snapshot before rebasing onto `main` (v0.82.0); dropped the OpenCode Go API-widening commit absorbed upstream and re-resolved native web-search, Gemini combined-tool, Meta reasoning-replay, and DeepInfra conflicts |
 | `zkao-v0.82.0-backup` | v0.82.0 | 2026-07-25 | Snapshot before rebasing onto `main` (v0.82.1); took upstream's e2e test-model retarget (`gpt-5.5`) over our equivalent fork hunks, and added the env-api-keys `.catch` fix for bundler-substituted rejecting imports (Turbopack unhandled rejections) |
+| `zkao-v0.82.1-backup` | v0.82.1 | 2026-08-04 | Snapshot before rebasing onto `main` (v0.83.0); adds refusal/account-restriction classification, the model downgrade fallback runner, and the `createAgentSession` stream-function wrapper. Re-resolved the DeepInfra `useMaxTokens` conflict (union with upstream's `isZai`), took upstream's new `"Provider stopped with: sensitive"` errorMessage over our equivalent fork hunk and matched it from the classifier instead, and handled the new `"pending"` stop reason in terminal-event mapping |
 
 ## License
 
