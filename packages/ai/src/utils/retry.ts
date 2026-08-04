@@ -1,4 +1,5 @@
 import type { AssistantMessage } from "../types.ts";
+import { getAccountRestrictionPatterns, getRefusalPatterns } from "./refusal.ts";
 
 function buildProviderErrorPattern(patterns: readonly string[]): RegExp {
 	return new RegExp(patterns.join("|"), "i");
@@ -21,7 +22,28 @@ const NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN = buildProviderErrorPattern([
 	"out of budget",
 	"quota exceeded",
 	"billing",
+
+	// Account usage limits reported as a 429 error type. Without this the "429"
+	// entry in RETRYABLE_PROVIDER_ERROR_PATTERN matches the status code embedded
+	// in the body and the limit is retried until the budget is exhausted.
+	"usage_limit_reached",
 ]);
+
+/**
+ * Refusals and account restrictions, marked non-retryable positively rather than
+ * by absence from RETRYABLE_PROVIDER_ERROR_PATTERN.
+ *
+ * Absence alone is not enough: refusal text routinely carries a status code or
+ * other incidental substring that the retryable pattern matches (a `400` prefix,
+ * a body containing `content_filter` alongside `429`). A positive rule means
+ * adding an entry to the retryable set can never silently make refusals
+ * retryable again.
+ *
+ * Re-sending refused content to the model that refused it earns the same
+ * refusal; the correct response is a different model (see `fallback.ts`) or, for
+ * account restrictions, a different credential.
+ */
+const NON_RETRYABLE_REFUSAL_PATTERNS: readonly RegExp[] = [...getRefusalPatterns(), ...getAccountRestrictionPatterns()];
 
 const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// Generic provider load, HTTP status, and server-side transient failures.
@@ -223,5 +245,6 @@ export function isRetryableAssistantError(message: AssistantMessage): boolean {
 	if (message.stopReason !== "error" || !message.errorMessage) return false;
 	const errorMessage = message.errorMessage;
 	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage)) return false;
+	if (NON_RETRYABLE_REFUSAL_PATTERNS.some((pattern) => pattern.test(errorMessage))) return false;
 	return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);
 }
