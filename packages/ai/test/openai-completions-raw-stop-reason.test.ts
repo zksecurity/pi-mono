@@ -54,6 +54,31 @@ const context = normalizeContext({
 });
 
 describe("OpenAI completions raw stop reasons", () => {
+	it("preserves refusal text sent through the native refusal delta", async () => {
+		mockState.chunks = [
+			{ choices: [{ index: 0, delta: { refusal: "Request " }, finish_reason: null }] },
+			{ choices: [{ index: 0, delta: { refusal: "declined." }, finish_reason: "stop" }] },
+		];
+		const message = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+		expect(message.stopReason).toBe("stop");
+		expect(message.content).toEqual([{ type: "text", text: "Request declined." }]);
+		expect(message.refusal).toEqual({ source: "content_filter", raw: "Request declined." });
+	});
+	it.each(["openai", "xai", "deepseek"])("preserves %s content_filter refusals", async (provider) => {
+		mockState.chunks = [{ choices: [{ index: 0, delta: {}, finish_reason: "content_filter" }] }];
+		const message = await streamOpenAICompletions({ ...model, provider }, context, { apiKey: "test" }).result();
+		expect(message.stopReason).toBe("error");
+		expect(message.refusal).toEqual({ source: "stop_reason", raw: "content_filter" });
+	});
+
+	it("keeps unknown finish reasons as ordinary errors", async () => {
+		mockState.chunks = [{ choices: [{ index: 0, delta: {}, finish_reason: "future_reason" }] }];
+		const message = await streamOpenAICompletions(model, context, { apiKey: "test" }).result();
+		expect(message.stopReason).toBe("error");
+		expect(message.rawStopReason).toBe("future_reason");
+		expect(message.errorMessage).toBe("Provider finish_reason: future_reason");
+		expect(message.refusal).toBeUndefined();
+	});
 	beforeEach(() => {
 		mockState.chunks = [];
 	});
