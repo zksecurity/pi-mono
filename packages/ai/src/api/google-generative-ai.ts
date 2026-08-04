@@ -34,6 +34,7 @@ import {
 	convertMessages,
 	convertTools,
 	getDisabledGoogleThinkingConfig,
+	getGoogleRefusal,
 	isThinkingPart,
 	mapStopReason,
 	resolveGoogleFunctionCallingMode,
@@ -262,9 +263,16 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 				if (candidate?.finishReason) {
 					output.rawStopReason = candidate.finishReason;
 					output.stopReason = mapStopReason(candidate.finishReason);
+					output.refusal ??= getGoogleRefusal(candidate.finishReason, "stop_reason");
 					if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
 						output.stopReason = "toolUse";
 					}
+				}
+
+				if (chunk.promptFeedback?.blockReason) {
+					output.rawStopReason = chunk.promptFeedback.blockReason;
+					output.stopReason = "error";
+					output.refusal ??= getGoogleRefusal(chunk.promptFeedback.blockReason, "content_filter");
 				}
 
 				if (chunk.usageMetadata) {
