@@ -39,12 +39,19 @@ const BUDGETS = {
 			maxFiles: 15,
 			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
 		},
-		"./utils/*": { maxFiles: 3, forbid: ["providers/", "api/", "index.ts"] },
+		// The fork's downgrade-fallback runner composes retry, refusal classification,
+		// diagnostics and the event stream, so it is the one utils entry allowed past 3.
+		"./utils/*": {
+			maxFiles: 3,
+			forbid: ["providers/", "api/", "index.ts"],
+			overrides: { "./utils/fallback": 5 },
+		},
 	},
 	"packages/durable": {
 		".": {
 			// Tool argument validation reaches TypeBox; provider-session creation reaches pi-ai's lean UUID utility.
-			maxFiles: 62,
+			// +1 for the fork: utils/retry.ts imports utils/refusal.ts for refusal classification.
+			maxFiles: 63,
 			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts"],
 		},
 	},
@@ -123,9 +130,10 @@ for (const [pkgDir, budgets] of Object.entries(BUDGETS)) {
 				continue;
 			}
 			const graph = [...walk(source)].map((file) => relative(ROOT, file));
-			if (graph.length > budget.maxFiles) {
+			const maxFiles = budget.overrides?.[name] ?? budget.maxFiles;
+			if (graph.length > maxFiles) {
 				console.error(
-					`${pkgDir} export "${name}" reaches ${graph.length} files, budget ${budget.maxFiles}\n` +
+					`${pkgDir} export "${name}" reaches ${graph.length} files, budget ${maxFiles}\n` +
 						graph.map((file) => `    ${file}`).join("\n"),
 				);
 				failures += 1;
