@@ -42,7 +42,13 @@ const BUDGETS = {
 			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
 			allow: ["packages/telemetry/src/index.ts"],
 		},
-		"./utils/*": { maxFiles: 3, forbid: ["providers/", "api/", "index.ts"] },
+		// The fork's downgrade-fallback runner composes retry, refusal classification,
+		// diagnostics and the event stream, so it is the one utils entry allowed past 3.
+		"./utils/*": {
+			maxFiles: 3,
+			forbid: ["providers/", "api/", "index.ts"],
+			overrides: { "./utils/fallback": 5 },
+		},
 	},
 	"packages/codemode": {
 		// Node and Bun users never load the Cloudflare entry, which imports the `cloudflare:workers` built-in.
@@ -65,7 +71,8 @@ const BUDGETS = {
 			// replicatedState) reach its host runtime through the root barrel. Chord's context reaches pi-telemetry's root
 			// (index, noop, metrics, memory) for its NOOP telemetry default; harness/telemetry.ts is Durable's schema.
 			// The Harness's request identity reaches pi-ai's utils/identity.ts and its version constant.
-			maxFiles: 73,
+			// +1 for the fork: utils/retry.ts imports utils/refusal.ts for refusal classification.
+			maxFiles: 74,
 			forbid: [
 				"packages/ai/src/index.ts",
 				"packages/ai/src/utils/typebox-helpers.ts",
@@ -151,9 +158,10 @@ for (const [pkgDir, budgets] of Object.entries(BUDGETS)) {
 				continue;
 			}
 			const graph = [...walk(source)].map((file) => relative(ROOT, file));
-			if (graph.length > budget.maxFiles) {
+			const maxFiles = budget.overrides?.[name] ?? budget.maxFiles;
+			if (graph.length > maxFiles) {
 				console.error(
-					`${pkgDir} export "${name}" reaches ${graph.length} files, budget ${budget.maxFiles}\n` +
+					`${pkgDir} export "${name}" reaches ${graph.length} files, budget ${maxFiles}\n` +
 						graph.map((file) => `    ${file}`).join("\n"),
 				);
 				failures += 1;
