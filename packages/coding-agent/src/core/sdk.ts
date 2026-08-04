@@ -1,5 +1,11 @@
 import { join } from "node:path";
-import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import {
+	Agent,
+	type AgentMessage,
+	type StreamFn,
+	setDefaultStreamFn,
+	type ThinkingLevel,
+} from "@earendil-works/pi-agent-core";
 import {
 	clampThinkingLevel,
 	type Message,
@@ -83,6 +89,28 @@ export interface CreateAgentSessionOptions {
 
 	/** Resource loader. When omitted, DefaultResourceLoader is used. */
 	resourceLoader?: ResourceLoader;
+
+	/**
+	 * Wrap the session's stream function.
+	 *
+	 * Receives the stream function this session would otherwise use — already
+	 * wired with provider retry settings, HTTP timeouts, provider-attribution
+	 * headers, and the `before_provider_headers` extension hook — and returns the
+	 * one to use instead. Called once, during session creation.
+	 *
+	 * This is a wrapper rather than a plain replacement so a caller can add
+	 * behavior around a request without reimplementing that wiring. To replace
+	 * the stream function outright, ignore the argument.
+	 *
+	 * @example Retry a refused turn on a weaker model
+	 * ```ts
+	 * createAgentSession({
+	 *   streamFn: (next) => (model, context, options) =>
+	 *     runWithModelFallback(model, (m) => next(m, context, options)),
+	 * });
+	 * ```
+	 */
+	streamFn?: (next: StreamFn) => StreamFn;
 
 	/** Session manager. Default: SessionManager.create(cwd) */
 	sessionManager?: SessionManager;
@@ -300,6 +328,31 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 
+	const defaultStreamFn: StreamFn = async (model, context, options) => {
+		const providerRetrySettings = settingsManager.getProviderRetrySettings();
+		const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
+		// SDKs treat timeout=0 as 0ms (immediate timeout), not "no timeout".
+		// Use max int32 to effectively disable the timeout.
+		const effectiveTimeoutMs = httpIdleTimeoutMs === 0 ? 2147483647 : httpIdleTimeoutMs;
+		const timeoutMs = options?.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs;
+		const websocketConnectTimeoutMs =
+			options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
+		const headerRunner = extensionRunnerRef.current;
+		return modelRuntime.streamSimple(model, context, {
+			...options,
+			timeoutMs,
+			websocketConnectTimeoutMs,
+			maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
+			maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
+			transformHeaders: async (requestHeaders) => {
+				const headers = mergeProviderAttributionHeaders(model, settingsManager, options?.sessionId, requestHeaders);
+				return headerRunner?.hasHandlers("before_provider_headers")
+					? headerRunner.emitBeforeProviderHeaders(headers ?? {})
+					: (headers ?? {});
+			},
+		});
+	};
+
 	agent = new Agent({
 		initialState: {
 			systemPrompt: "",
@@ -308,35 +361,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			tools: [],
 		},
 		convertToLlm: convertToLlmWithBlockImages,
-		streamFn: async (model, context, options) => {
-			const providerRetrySettings = settingsManager.getProviderRetrySettings();
-			const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
-			// SDKs treat timeout=0 as 0ms (immediate timeout), not "no timeout".
-			// Use max int32 to effectively disable the timeout.
-			const effectiveTimeoutMs = httpIdleTimeoutMs === 0 ? 2147483647 : httpIdleTimeoutMs;
-			const timeoutMs = options?.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs;
-			const websocketConnectTimeoutMs =
-				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
-			const headerRunner = extensionRunnerRef.current;
-			return modelRuntime.streamSimple(model, context, {
-				...options,
-				timeoutMs,
-				websocketConnectTimeoutMs,
-				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
-				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
-				transformHeaders: async (requestHeaders) => {
-					const headers = mergeProviderAttributionHeaders(
-						model,
-						settingsManager,
-						options?.sessionId,
-						requestHeaders,
-					);
-					return headerRunner?.hasHandlers("before_provider_headers")
-						? headerRunner.emitBeforeProviderHeaders(headers ?? {})
-						: (headers ?? {});
-				},
-			});
-		},
+		streamFn: options.streamFn ? options.streamFn(defaultStreamFn) : defaultStreamFn,
 		onPayload: async (payload, _model) => {
 			const runner = extensionRunnerRef.current;
 			if (!runner?.hasHandlers("before_provider_request")) {
