@@ -180,6 +180,42 @@ describe("Google raw stop reasons", () => {
 		expect(message.content.some((block) => block.type === "toolCall")).toBe(true);
 	});
 
+	for (const adapter of adapters) {
+		it.each(["SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT"])(
+			`${adapter.name} preserves %s finish refusals`,
+			async (reason) => {
+				googleGenAiMock.streamChunks = [{ candidates: [{ finishReason: reason }] }];
+				const message = await adapter.createStream().result();
+				expect(message.stopReason).toBe("error");
+				expect(message.rawStopReason).toBe(reason);
+				expect(message.refusal).toEqual({ source: "stop_reason", raw: reason });
+			},
+		);
+
+		it.each(["SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "IMAGE_SAFETY", "MODEL_ARMOR", "JAILBREAK"])(
+			`${adapter.name} preserves %s prompt blocks without candidates`,
+			async (reason) => {
+				googleGenAiMock.streamChunks = [{ promptFeedback: { blockReason: reason } }];
+				const message = await adapter.createStream().result();
+				expect(message.stopReason).toBe("error");
+				expect(message.rawStopReason).toBe(reason);
+				expect(message.refusal).toEqual({ source: "content_filter", raw: reason });
+			},
+		);
+
+		it.each(["future_reason", "MALFORMED_FUNCTION_CALL", "OTHER"])(
+			`${adapter.name} keeps %s as an ordinary error`,
+			async (reason) => {
+				googleGenAiMock.streamChunks = [{ candidates: [{ finishReason: reason }] }];
+				const message = await adapter.createStream().result();
+				expect(message.stopReason).toBe("error");
+				expect(message.rawStopReason).toBe(reason);
+				expect(message.errorMessage).toBe(`Provider stopped with: ${reason}`);
+				expect(message.refusal).toBeUndefined();
+			},
+		);
+	}
+
 	it.each(adapters)("maps STOP with a tool call to toolUse for $name", async ({ createStream }) => {
 		googleGenAiMock.finishReason = "STOP";
 		googleGenAiMock.includeFunctionCall = true;

@@ -564,6 +564,9 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 
 				if (choice.finish_reason) {
 					output.rawStopReason = choice.finish_reason;
+					if (choice.finish_reason === "content_filter") {
+						output.refusal = { source: "stop_reason", raw: choice.finish_reason };
+					}
 					const finishReasonResult = mapStopReason(choice.finish_reason);
 					output.stopReason = finishReasonResult.stopReason;
 					if (finishReasonResult.errorMessage) {
@@ -573,6 +576,18 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				}
 
 				if (choice.delta) {
+					if (choice.delta.refusal) {
+						const block = ensureTextBlock();
+						block.text += choice.delta.refusal;
+						output.refusal ??= { source: "content_filter", raw: "" };
+						if (output.refusal.source === "content_filter") output.refusal.raw += choice.delta.refusal;
+						stream.push({
+							type: "text_delta",
+							contentIndex: getContentIndex(block),
+							delta: choice.delta.refusal,
+							partial: output,
+						});
+					}
 					// Handle reasoning before content: some proxies (e.g. LiteLLM) aggregate reasoning and
 					// answer into one delta, and the thinking block must precede the text block.
 					// Some endpoints return reasoning in reasoning_content (llama.cpp),
