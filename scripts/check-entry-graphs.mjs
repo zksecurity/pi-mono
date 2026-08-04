@@ -51,6 +51,8 @@ const BUDGETS = {
 			maxFiles: 3,
 			forbid: ["providers/", "api/", "index.ts"],
 			overrides: {
+				// The fork's fallback runner composes retry, refusal classification, diagnostics and event streams.
+				"./utils/fallback": { maxFiles: 5, forbid: ["providers/", "api/", "index.ts"] },
 				// Tool argument validation runs on pi-schema: its validator, coercion and format checks (the checks TypeBox's
 				// validator ran by default). TypeBox, an external package, was not counted before.
 				"./utils/validation": { maxFiles: 42, forbid: ["providers/", "api/", "packages/ai/src/index.ts"] },
@@ -86,7 +88,8 @@ const BUDGETS = {
 			// each conversation's newest entry and head marker (session/conversation-tails.ts). Group commit sends batches
 			// through `commit()`, or one `commit()` each (storage/commit-batch.ts), from a writer off the Session line
 			// (session/writer.ts) that gates reads by the keys of unpublished writes (session/keys.ts).
-			maxFiles: 123,
+			// +1 for the fork: utils/retry.ts imports utils/refusal.ts.
+			maxFiles: 124,
 			forbid: [
 				"packages/ai/src/index.ts",
 				"packages/ai/src/utils/string-enum.ts",
