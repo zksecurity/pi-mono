@@ -1169,6 +1169,20 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					if (Array.isArray(transformations)) inputTransformations = transformations;
 					if (event.delta.stop_reason) {
 						output.rawStopReason = event.delta.stop_reason;
+						if (
+							["refusal", "sensitive"].includes(event.delta.stop_reason) ||
+							event.delta.stop_details?.type === "refusal"
+						) {
+							output.refusal = {
+								source: "stop_reason",
+								raw: event.delta.stop_details
+									? JSON.stringify({
+											stop_reason: event.delta.stop_reason,
+											stop_details: event.delta.stop_details,
+										})
+									: event.delta.stop_reason,
+							};
+						}
 						const stopReasonResult = mapStopReason(event.delta.stop_reason, event.delta.stop_details);
 						output.stopReason = stopReasonResult.stopReason;
 						if (stopReasonResult.errorMessage) {
@@ -2117,6 +2131,6 @@ function mapStopReason(
 			return { stopReason: "error", errorMessage: "Provider stopped with: sensitive" };
 		default:
 			// Handle unknown stop reasons gracefully (API may add new values)
-			throw new Error(`Unhandled stop reason: ${reason}`);
+			return { stopReason: "error", errorMessage: `Provider stopped with: ${reason}` };
 	}
 }
