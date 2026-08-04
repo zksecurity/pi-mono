@@ -39,6 +39,7 @@ export * from "./types.ts";
 export * from "./utils/assistant-message-frame.ts";
 export * from "./utils/diagnostics.ts";
 export * from "./utils/event-stream.ts";
+export * from "./utils/fallback.ts";
 export * from "./utils/json-parse.ts";
 export * from "./utils/overflow.ts";
 export * from "./utils/refusal.ts";
