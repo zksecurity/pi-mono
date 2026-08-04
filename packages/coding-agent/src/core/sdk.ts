@@ -1,5 +1,11 @@
 import { join } from "node:path";
-import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import {
+	Agent,
+	type AgentMessage,
+	type StreamFn,
+	setDefaultStreamFn,
+	type ThinkingLevel,
+} from "@earendil-works/pi-agent-core";
 import type { ModelsSimpleStreamOptions } from "@earendil-works/pi-ai";
 import {
 	clampThinkingLevel,
@@ -94,6 +100,28 @@ export interface CreateAgentSessionOptions {
 
 	/** Resource loader. When omitted, DefaultResourceLoader is used. */
 	resourceLoader?: ResourceLoader;
+
+	/**
+	 * Wrap the session's stream function.
+	 *
+	 * Receives the stream function this session would otherwise use — already
+	 * wired with provider retry settings, HTTP timeouts, provider-attribution
+	 * headers, and the `before_provider_headers` extension hook — and returns the
+	 * one to use instead. Called once, during session creation.
+	 *
+	 * This is a wrapper rather than a plain replacement so a caller can add
+	 * behavior around a request without reimplementing that wiring. To replace
+	 * the stream function outright, ignore the argument.
+	 *
+	 * @example Retry a refused turn on a weaker model
+	 * ```ts
+	 * createAgentSession({
+	 *   streamFn: (next) => (model, context, options) =>
+	 *     runWithModelFallback(model, (m) => next(m, context, options)),
+	 * });
+	 * ```
+	 */
+	streamFn?: (next: StreamFn) => StreamFn;
 
 	/** Session manager. Default: SessionManager.create(cwd) */
 	sessionManager?: SessionManager;
@@ -399,6 +427,19 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		});
 	};
 
+	const defaultStreamFn: StreamFn = async (model, context, options) => {
+		const requestOptions = buildRequestOptions(model, options);
+		// Compaction and summaries use their own routing ids; only session requests
+		// replace the cache entry, so warming restarts from them. Keep warming while
+		// the current transcript still extends the request's prefix. Agent state may
+		// shallow-copy the messages array or refresh the model object without changing
+		// the provider request, so top-level object identity is not a valid cache key.
+		if (options?.sessionId === sessionManager.getSessionId()) {
+			cacheWarmer.start({ model, context, options: requestOptions }, cacheContextIsCurrent(model));
+		}
+		return modelRuntime.streamSimple(model, context, requestOptions);
+	};
+
 	const agent = new Agent({
 		initialState: {
 			systemPrompt: "",
@@ -408,18 +449,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			messages: existingSession.messages,
 		},
 		convertToLlm: convertToLlmWithBlockImages,
-		streamFn: async (model, context, options) => {
-			const requestOptions = buildRequestOptions(model, options);
-			// Compaction and summaries use their own routing ids; only session requests
-			// replace the cache entry, so warming restarts from them. Keep warming while
-			// the current transcript still extends the request's prefix. Agent state may
-			// shallow-copy the messages array or refresh the model object without changing
-			// the provider request, so top-level object identity is not a valid cache key.
-			if (options?.sessionId === sessionManager.getSessionId()) {
-				cacheWarmer.start({ model, context, options: requestOptions }, cacheContextIsCurrent(model));
-			}
-			return modelRuntime.streamSimple(model, context, requestOptions);
-		},
+		streamFn: options.streamFn ? options.streamFn(defaultStreamFn) : defaultStreamFn,
 		onPayload: transformProviderPayload,
 		onResponse: handleProviderResponse,
 		onProviderStreamEvent: handleProviderStreamEvent,
