@@ -49,11 +49,11 @@ type _AiToolCallFieldsAccountedFor = Assert<
 type _AiUsageFieldsAccountedFor = Assert<
 	ExactKeys<
 		AiUsage,
-		"input" | "output" | "cacheRead" | "cacheWrite" | "cacheWrite1h" | "reasoning" | "totalTokens" | "cost"
+		"input" | "output" | "cacheRead" | "cacheWrite" | "cacheWrite1h" | "reasoning" | "totalTokens" | "extras" | "cost"
 	>
 >;
 type _AiUsageCostFieldsAccountedFor = Assert<
-	ExactKeys<AiUsage["cost"], "input" | "output" | "cacheRead" | "cacheWrite" | "total">
+	ExactKeys<AiUsage["cost"], "input" | "output" | "cacheRead" | "cacheWrite" | "total" | "extras">
 >;
 type _AiModelFieldsAccountedFor = Assert<
 	ExactKeys<
@@ -255,23 +255,35 @@ export function toProtocolUserMessage(message: UserMessage, options: UserTranscr
 }
 
 function toProtocolAssistantContent(message: AssistantMessage): AssistantTranscriptItem["content"] {
-	return message.content.map((part) => {
+	return message.content.flatMap((part): AssistantTranscriptItem["content"] => {
 		switch (part.type) {
 			case "text":
-				return { type: "text", text: part.text };
+				return [{ type: "text", text: part.text }];
 			case "thinking":
-				return {
-					type: "thinking",
-					thinking: part.thinking,
-					...(part.redacted === undefined ? {} : { redacted: part.redacted }),
-				};
+				return [
+					{
+						type: "thinking",
+						thinking: part.thinking,
+						...(part.redacted === undefined ? {} : { redacted: part.redacted }),
+					},
+				];
 			case "toolCall":
-				return {
-					type: "toolCall",
-					toolCallId: identifier(part.id, "Tool call id"),
-					toolName: identifier(part.name, "Tool call name"),
-					input: toProtocolJsonValue(part.arguments),
-				};
+				return [
+					{
+						type: "toolCall",
+						toolCallId: identifier(part.id, "Tool call id"),
+						toolName: identifier(part.name, "Tool call name"),
+						input: toProtocolJsonValue(part.arguments),
+					},
+				];
+			case "serverToolUse":
+				// Provider-executed tool blocks have no protocol representation:
+				// AssistantContentSchema is a strict text/thinking/toolCall union, so
+				// they stay server-side like the other intentionally-omitted pi-ai
+				// fields above. Nothing is lost for replay — providers echo these
+				// blocks back off the pi-ai AssistantMessage, not off the protocol
+				// transcript. They are simply not rendered by protocol consumers.
+				return [];
 			default: {
 				const exhaustive: never = part;
 				return exhaustive;
