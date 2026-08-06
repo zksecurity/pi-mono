@@ -25,7 +25,7 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"azure-openai-responses": "gpt-5.4",
 	"openai-codex": "gpt-5.5",
 	radius: "auto",
-	meta: "muse-spark-1.1",
+	meta: "muse-spark-1.2",
 	nvidia: "nvidia/nemotron-3-super-120b-a12b",
 	deepinfra: "moonshotai/Kimi-K2.7-Code",
 	deepseek: "deepseek-v4-pro",
