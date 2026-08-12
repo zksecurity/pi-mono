@@ -26,6 +26,7 @@ export function withOpenAiLongContextPricing(cost: ModelCost): ModelCost {
 // catalogs catch up.
 // https://developers.openai.com/api/docs/pricing
 export const OPENAI_STANDARD_COSTS: Record<string, ModelCost> = {
+	"gpt-daybreak-blue-latest": { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
 	"gpt-5.6-luna": { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25 },
 	"gpt-5.6-sol": { input: 4, output: 20, cacheRead: 0.4, cacheWrite: 5 },
 	"gpt-5.6-terra": { input: 2, output: 12, cacheRead: 0.2, cacheWrite: 2.5 },
@@ -46,6 +47,7 @@ export function openAiStandardCost(id: string): ModelCost {
 // (#11415). Like Codex, dynamic tool loading therefore starts with GPT-5.6, which does not do this.
 /** Models that accept tool search and `additional_tools`. */
 export const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
+	"gpt-daybreak-blue-latest",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
@@ -77,7 +79,8 @@ export function supportsOpenAiXhigh(modelId: string): boolean {
 		modelId.includes("gpt-5.4") ||
 		modelId.includes("gpt-5.5") ||
 		modelId.includes("gpt-5.6") ||
-		modelId.includes("gpt-6")
+		modelId.includes("gpt-6") ||
+		modelId === "gpt-daybreak-blue-latest"
 	);
 }
 
@@ -105,7 +108,7 @@ export function applyOpenAiFamilyRules(model: ChatModel): void {
 		mergeThinking(model, { xhigh: "xhigh" });
 	}
 	if (
-		(model.id.includes("gpt-5.6") || model.id.includes("gpt-6")) &&
+		(model.id.includes("gpt-5.6") || model.id.includes("gpt-6") || model.id === "gpt-daybreak-blue-latest") &&
 		(isResponsesApi(model) || model.api === "openai-completions")
 	) {
 		mergeThinking(model, { max: "max" });
@@ -122,7 +125,7 @@ export function applyOpenAiFamilyRules(model: ChatModel): void {
 export function enableOpenAiGrammarTools(model: ChatModel): void {
 	if (!isResponsesApi(model)) return;
 	const match = /^gpt-(\d+)/.exec(model.id);
-	if (!match || Number(match[1]) < 5) return;
+	if (model.id !== "gpt-daybreak-blue-latest" && (!match || Number(match[1]) < 5)) return;
 	mergeCompat(model as Model<"openai-responses">, { supportsOpenAIGrammarTools: true });
 }
 
