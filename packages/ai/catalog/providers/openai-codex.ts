@@ -23,10 +23,12 @@ const MODELS = [
 	{ id: "gpt-5.6-luna", name: "GPT-5.6 Luna", contextWindow: 272000 },
 	{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol", contextWindow: 272000 },
 	{ id: "gpt-5.6-terra", name: "GPT-5.6 Terra", contextWindow: 272000 },
+	{ id: "gpt-daybreak-blue-latest", name: "GPT Daybreak Blue", contextWindow: 272000 },
 ];
 
 // Codex CLI keeps additional_tools behind its own model list.
 const ADDITIONAL_TOOLS_MODEL_IDS = new Set([
+	"gpt-daybreak-blue-latest",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
