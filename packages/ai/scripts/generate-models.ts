@@ -344,6 +344,10 @@ const ANT_LING_RING_THINKING_LEVEL_MAP = {
 
 const BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS = new Set(["anthropic.claude-opus-5"]);
 const MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS = new Set(["gpt-5.6"]);
+// Daybreak aliases resolve to a GPT-5.6 model server-side (Blue -> Sol), so they
+// share that model's effort ladder and tool support even though their ids carry no
+// version number. https://developers.openai.com/api/docs/models/daybreak-blue-latest
+const OPENAI_DAYBREAK_MODEL_IDS = new Set(["gpt-daybreak-blue-latest"]);
 const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.4",
 	"gpt-5.4-mini",
@@ -352,6 +356,7 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-daybreak-blue-latest",
 ]);
 // Public OpenAI documents additional_tools for applications that load tools
 // outside the normal tool-search flow. Codex currently uses the input item for
@@ -527,13 +532,14 @@ function supportsOpenAiXhigh(modelId: string): boolean {
 		modelId.includes("gpt-5.3") ||
 		modelId.includes("gpt-5.4") ||
 		modelId.includes("gpt-5.5") ||
-		modelId.includes("gpt-5.6")
+		modelId.includes("gpt-5.6") ||
+		OPENAI_DAYBREAK_MODEL_IDS.has(modelId)
 	);
 }
 
 function supportsOpenAiMax(model: Model<Api>): boolean {
 	return (
-		model.id.includes("gpt-5.6") &&
+		(model.id.includes("gpt-5.6") || OPENAI_DAYBREAK_MODEL_IDS.has(model.id)) &&
 		(model.api === "openai-responses" ||
 			model.api === "azure-openai-responses" ||
 			model.api === "openai-codex-responses" ||
@@ -768,8 +774,10 @@ const OPENAI_GRAMMAR_TOOL_APIS = new Set<Api>([
 
 function applyOpenAIGrammarToolCompatMetadata(model: Model<Api>): void {
 	if (!OPENAI_GRAMMAR_TOOL_APIS.has(model.api) || !OPENAI_GRAMMAR_TOOL_PROVIDERS.has(model.provider)) return;
-	const match = /^gpt-(\d+)/.exec(model.id);
-	if (!match || Number(match[1]) < 5) return;
+	if (!OPENAI_DAYBREAK_MODEL_IDS.has(model.id)) {
+		const match = /^gpt-(\d+)/.exec(model.id);
+		if (!match || Number(match[1]) < 5) return;
+	}
 	model.compat = { ...(model.compat as OpenAIResponsesCompat | undefined), supportsOpenAIGrammarTools: true };
 }
 
@@ -2718,6 +2726,22 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-terra"]),
+			contextWindow: CODEX_GPT_56_CONTEXT,
+			maxTokens: CODEX_MAX_TOKENS,
+		},
+		{
+			// Daybreak Blue is GPT-5.6 Sol with the cyber guardrails lifted for approved
+			// defenders, so it inherits Sol's pricing and capabilities. Access is gated by
+			// the Daybreak program; the model only appears for entitled accounts.
+			// https://developers.openai.com/api/docs/models/daybreak-blue-latest
+			id: "gpt-daybreak-blue-latest",
+			name: "GPT Daybreak Blue",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing({ input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 }),
 			contextWindow: CODEX_GPT_56_CONTEXT,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
