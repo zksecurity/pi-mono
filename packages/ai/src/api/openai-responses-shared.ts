@@ -544,6 +544,11 @@ export async function processResponsesStream<TApi extends Api>(
 	let sawTerminalResponseEvent = false;
 	const outputSlots = new Map<number, ResponsesOutputSlot>();
 	const reasoningBlocksById = new Map<string, ThinkingContent>();
+	// The Codex backend streams web_search_call output items but sends `output: []`
+	// on the terminal response event, so counting searches from the terminal output
+	// alone reads zero there. Track the streamed items (done overwrites added, since
+	// only done carries the final action) as the fallback count source.
+	const streamedWebSearchCalls = new Map<number, unknown>();
 	const applyMessagePhaseStopReason = (item: ResponseOutputItem): void => {
 		if (item.type === "message" && item.phase === "final_answer") {
 			output.stopReason = "stop";
@@ -678,7 +683,10 @@ export async function processResponsesStream<TApi extends Api>(
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			};
 		}
-		const webSearch = computeWebSearchCost(response?.output, model.provider);
+		let webSearch = computeWebSearchCost(response?.output, model.provider);
+		if (webSearch.count === 0 && streamedWebSearchCalls.size > 0) {
+			webSearch = computeWebSearchCost([...streamedWebSearchCalls.values()], model.provider);
+		}
 		if (webSearch.count > 0) {
 			output.usage.extras = { webSearch: webSearch.count };
 			output.usage.cost.extras = { webSearch: webSearch.cost };
@@ -708,6 +716,9 @@ export async function processResponsesStream<TApi extends Api>(
 		if (event.type === "response.created") {
 			output.responseId = event.response.id;
 		} else if (event.type === "response.output_item.added") {
+			if (event.item.type === "web_search_call") {
+				streamedWebSearchCalls.set(event.output_index, event.item);
+			}
 			createSlot(event.output_index, event.item);
 		} else if (event.type === "response.reasoning_summary_text.delta") {
 			const slot = getSlot(event.output_index, "thinking");
@@ -789,6 +800,9 @@ export async function processResponsesStream<TApi extends Api>(
 			pushToolCallDelta(slot, appendCustomToolCallInput(slot.block, event.input, true));
 		} else if (event.type === "response.output_item.done") {
 			const item = event.item;
+			if (item.type === "web_search_call") {
+				streamedWebSearchCalls.set(event.output_index, item);
+			}
 			applyMessagePhaseStopReason(item);
 			const slot = getOrCreateSlot(event.output_index, item);
 
