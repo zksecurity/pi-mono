@@ -32,7 +32,13 @@ const WORKSPACE = {
  */
 const BUDGETS = {
 	"packages/ai": {
-		"./utils/*": { maxFiles: 3, forbid: ["providers/", "api/", "index.ts"] },
+		// The fork's downgrade-fallback runner composes retry, refusal classification,
+		// diagnostics and the event stream, so it is the one utils entry allowed past 3.
+		"./utils/*": {
+			maxFiles: 3,
+			forbid: ["providers/", "api/", "index.ts"],
+			overrides: { "./utils/fallback": 5 },
+		},
 	},
 	"packages/agent": {
 		"./harness/runtime/reducer": { maxFiles: 1 },
@@ -115,9 +121,10 @@ for (const [pkgDir, budgets] of Object.entries(BUDGETS)) {
 				continue;
 			}
 			const graph = [...walk(source)].map((file) => relative(ROOT, file));
-			if (graph.length > budget.maxFiles) {
+			const maxFiles = budget.overrides?.[name] ?? budget.maxFiles;
+			if (graph.length > maxFiles) {
 				console.error(
-					`${pkgDir} export "${name}" reaches ${graph.length} files, budget ${budget.maxFiles}\n` +
+					`${pkgDir} export "${name}" reaches ${graph.length} files, budget ${maxFiles}\n` +
 						graph.map((file) => `    ${file}`).join("\n"),
 				);
 				failures += 1;
