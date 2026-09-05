@@ -2889,6 +2889,27 @@ async function generateModels() {
 	// output rate. cacheRead is an estimate until Meta publishes a cached rate.
 	const museModels: Model<"openai-responses">[] = [
 		{
+			id: "muse-spark-1.3",
+			name: "Muse Spark 1.3",
+			api: "openai-responses",
+			baseUrl: "https://api.meta.ai/v1",
+			provider: "meta",
+			// 1.3 (shipped 2026-09-02) keeps the 1.1/1.2 Responses surface: it still
+			// always reasons and still server-references reasoning items, so carry
+			// both quirks over. Meta added video and document input; the catalog
+			// only models text and image, so list those.
+			thinkingLevelMap: { off: null },
+			compat: { replayReasoning: false },
+			reasoning: true,
+			input: ["text", "image"],
+			// Standard tier, unchanged from 1.2. The "muse-spark-1.3-contributor"
+			// tier (0.10/0.002/0.20) trades the discount for training on your
+			// prompts and completions; not listed here on purpose.
+			cost: { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
+			contextWindow: 1048576,
+			maxTokens: 131072,
+		},
+		{
 			id: "muse-spark-1.2",
 			name: "Muse Spark 1.2",
 			api: "openai-responses",
