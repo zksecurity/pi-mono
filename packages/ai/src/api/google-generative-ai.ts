@@ -446,7 +446,7 @@ function buildParams(
 
 	config.toolConfig = buildGoogleToolConfig({
 		functionCallingMode,
-		hasFunctionTools: !!context.tools?.length,
+		hasFunctionTools: currentTools.length > 0,
 		hasBuiltInTool: !!googleSearch,
 		toolChoice: options.toolChoice,
 	});

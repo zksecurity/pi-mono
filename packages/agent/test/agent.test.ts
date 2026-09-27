@@ -1215,7 +1215,9 @@ describe("Agent", () => {
 		expect(() => {
 			new Agent({
 				initialState: {
-					tools: [{ name: "web_search", description: "ok" } as any],
+					tools: [
+						{ name: "web_search", description: "ok", parameters: { type: "object", properties: {} } } as any,
+					],
 				},
 				streamFn: unusedStreamFunction,
 			});

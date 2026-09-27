@@ -11,7 +11,6 @@ import type {
 	BetaRefusalStopDetails as RefusalStopDetails,
 	BetaServerToolUseBlock as ServerToolUseBlock,
 	BetaServerToolUseBlockParam as ServerToolUseBlockParam,
-	BetaToolUnion as ToolUnion,
 	BetaWebSearchTool20250305 as WebSearchTool20250305,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 import { calculateCost } from "../models.ts";

@@ -154,7 +154,7 @@ describe("streamProxy request serialization", () => {
 	it("relays nativeTools to the proxy request body", async () => {
 		const getCaptured = stubProxyFetch();
 
-		const stream = streamProxy(anthropicModel, context, {
+		const stream = streamProxy(anthropicModel, normalizeContext(context), {
 			authToken: "token",
 			proxyUrl: "https://proxy.test",
 			temperature: 0.5,
@@ -171,7 +171,7 @@ describe("streamProxy request serialization", () => {
 	it("strips non-serializable and proxy-only keys from the request body", async () => {
 		const getCaptured = stubProxyFetch();
 
-		const stream = streamProxy(anthropicModel, context, {
+		const stream = streamProxy(anthropicModel, normalizeContext(context), {
 			authToken: "token",
 			proxyUrl: "https://proxy.test",
 			apiKey: "secret-key",

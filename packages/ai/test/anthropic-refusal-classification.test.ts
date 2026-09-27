@@ -4,6 +4,7 @@ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { getModel } from "../src/compat.ts";
 import type { Context } from "../src/types.ts";
 import { isRefusal } from "../src/utils/refusal.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 /**
  * Guards the contract between the Anthropic adapter's stop-reason mapping and
@@ -76,7 +77,9 @@ async function runWithStopReason(stopReason: string, stopDetails?: Record<string
 	const response = createSseResponse(eventsWithStopReason(stopReason, stopDetails));
 	// The adapter throws on a terminal error stop reason; the stream still
 	// resolves to the assistant message carrying it.
-	return await streamAnthropic(model, context, { client: createFakeAnthropicClient(response) }).result();
+	return await streamAnthropic(model, normalizeContext(context), {
+		client: createFakeAnthropicClient(response),
+	}).result();
 }
 
 describe("Anthropic refusal classification", () => {
