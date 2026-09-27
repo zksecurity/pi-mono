@@ -2,6 +2,7 @@ import { FunctionCallingConfigMode } from "@google/genai";
 import { describe, expect, it } from "vitest";
 import { applyServerToolPart, buildGoogleToolConfig, convertMessages } from "../src/api/google-shared.ts";
 import type { AssistantMessage, Context, Model, ServerToolUse } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function makeGemini3Model(
 	api: "google-generative-ai" | "google-vertex" = "google-generative-ai",
@@ -131,7 +132,7 @@ describe("google-shared convertMessages — ServerToolUse round-trip", () => {
 	it("replays toolCall + toolResponse parts with signatures for the same model", () => {
 		const model = makeGemini3Model();
 		const context: Context = { messages: [makeAssistantMessage(model, [block])] };
-		const contents = convertMessages(model, context);
+		const contents = convertMessages(model, normalizeContext(context));
 		const modelTurn = contents.find((c) => c.role === "model");
 		const parts = modelTurn?.parts ?? [];
 
@@ -148,7 +149,7 @@ describe("google-shared convertMessages — ServerToolUse round-trip", () => {
 		const context: Context = {
 			messages: [makeAssistantMessage({ ...model, id: "other-model" }, [block])],
 		};
-		const contents = convertMessages(model, context);
+		const contents = convertMessages(model, normalizeContext(context));
 		// The assistant turn has no other content, so it is omitted entirely.
 		expect(contents.find((c) => c.role === "model")).toBeUndefined();
 	});

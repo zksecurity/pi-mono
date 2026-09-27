@@ -4,11 +4,11 @@ import type { Context } from "../src/types.ts";
 
 const MODELS = [
 	"zai-org/GLM-5.2",
-	"moonshotai/Kimi-K2.7-Code",
+	"moonshotai/Kimi-K3",
 	"nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
 	"deepseek-ai/DeepSeek-V4-Pro",
 	"Qwen/Qwen3.6-35B-A3B",
-	"XiaomiMiMo/MiMo-V2.5-Pro",
+	"XiaomiMiMo/MiMo-V2.6-Pro",
 	"google/gemma-4-26B-A4B-it",
 ] as const;
 
