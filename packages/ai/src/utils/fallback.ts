@@ -236,6 +236,9 @@ function declinedDiagnostic<TApi extends Api>(
 	response: AssistantMessage,
 	attempt: number,
 ): AssistantMessageDiagnostic {
+	// Spread into plain objects so the interfaces satisfy JsonValue. A missing
+	// cost stays missing so getDeclinedAttempts zeroes it on read.
+	const { cost, ...tokens } = response.usage;
 	return {
 		type: MODEL_FALLBACK_DIAGNOSTIC_TYPE,
 		timestamp: Date.now(),
@@ -248,7 +251,7 @@ function declinedDiagnostic<TApi extends Api>(
 			// refusal) and not by others (an Anthropic pre-output classifier block
 			// is unbilled), so keep the per-attempt usage rather than summing it
 			// into the serving model's, whose rates do not apply to it.
-			usage: response.usage,
+			usage: { ...tokens, ...(cost && { cost: { ...cost } }) },
 		},
 	};
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { getModel } from "../src/compat.ts";
 import type { AssistantMessage, Context, ServerToolUse } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function createSseResponse(events: Array<{ event: string; data: string }>): Response {
 	const body = events.map(({ event, data }) => `event: ${event}\ndata: ${data}\n`).join("\n");
@@ -152,7 +153,7 @@ async function captureSearchTurn(): Promise<AssistantMessage> {
 	const context: Context = {
 		messages: [{ role: "user", content: "search the web", timestamp: Date.now() }],
 	};
-	const result = await streamAnthropic(model, context, {
+	const result = await streamAnthropic(model, normalizeContext(context), {
 		nativeTools: { webSearch: true },
 		client: createFakeAnthropicClient(createSseResponse(searchTurnEvents)),
 	}).result();
@@ -171,7 +172,7 @@ async function capturePayloadFor(assistant: AssistantMessage): Promise<{ role: s
 			{ role: "user", content: "now summarize", timestamp: Date.now() },
 		],
 	};
-	await streamAnthropic(model, context, {
+	await streamAnthropic(model, normalizeContext(context), {
 		apiKey: "fake-key",
 		nativeTools: { webSearch: true },
 		onPayload: (payload) => {
@@ -239,13 +240,13 @@ describe("Anthropic server-side tool blocks", () => {
 		let captured: { messages: { role: string; content: any[] }[] } | undefined;
 		await streamAnthropic(
 			model,
-			{
+			normalizeContext({
 				messages: [
 					{ role: "user", content: "search the web", timestamp: Date.now() },
 					assistant,
 					{ role: "user", content: "now summarize", timestamp: Date.now() },
 				],
-			},
+			}),
 			{
 				apiKey: "fake-key",
 				onPayload: (payload) => {
@@ -264,7 +265,7 @@ describe("Anthropic server-side tool blocks", () => {
 		const context: Context = {
 			messages: [{ role: "user", content: "search the web", timestamp: Date.now() }],
 		};
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			nativeTools: { webSearch: true },
 			client: createFakeAnthropicClient(createSseResponse(truncated)),
 		}).result();

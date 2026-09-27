@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { convertResponsesMessages } from "../src/api/openai-responses-shared.ts";
 import { getModel } from "../src/compat.ts";
 import type { AssistantMessage, Context, ToolResultMessage, Usage } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const usage: Usage = {
 	input: 0,
@@ -54,7 +55,9 @@ const PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 describe("Meta Muse reasoning replay compat", () => {
 	it("omits reasoning items and drops the paired fc_ id when replayReasoning is false", () => {
 		const model = getModel("meta", "muse-spark-1.1");
-		const input = convertResponsesMessages(model, conversation(), PROVIDERS, { replayReasoning: false });
+		const input = convertResponsesMessages(model, normalizeContext(conversation()), PROVIDERS, {
+			replayReasoning: false,
+		});
 
 		expect(input.some((item) => item.type === "reasoning")).toBe(false);
 		const fc = input.find((item) => item.type === "function_call");
@@ -66,7 +69,7 @@ describe("Meta Muse reasoning replay compat", () => {
 
 	it("replays reasoning items and keeps the fc_ id by default (stateless contract)", () => {
 		const model = getModel("meta", "muse-spark-1.1");
-		const input = convertResponsesMessages(model, conversation(), PROVIDERS);
+		const input = convertResponsesMessages(model, normalizeContext(conversation()), PROVIDERS);
 
 		const reasoning = input.find((item) => item.type === "reasoning");
 		expect(reasoning).toBeDefined();

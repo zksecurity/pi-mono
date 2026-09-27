@@ -6,8 +6,8 @@ import {
 	type Content,
 	FinishReason,
 	FunctionCallingConfigMode,
-	type GoogleSearch,
 	ThinkingLevel as GoogleSdkThinkingLevel,
+	type GoogleSearch,
 	type Part,
 	type ThinkingConfig,
 	type ToolConfig,
@@ -25,8 +25,8 @@ import type {
 	ThinkingContent,
 	ThinkingLevel,
 	Tool,
-	TranscriptContext,
 	ToolCall,
+	TranscriptContext,
 } from "../types.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
