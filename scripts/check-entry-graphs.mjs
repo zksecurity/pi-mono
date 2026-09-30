@@ -50,7 +50,8 @@ const BUDGETS = {
 	"packages/durable": {
 		".": {
 			// Tool argument validation reaches TypeBox; provider-session creation reaches pi-ai's lean UUID utility.
-			maxFiles: 62,
+			// +1 for the fork: utils/retry.ts imports utils/refusal.ts for refusal classification.
+			maxFiles: 63,
 			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts"],
 		},
 	},
