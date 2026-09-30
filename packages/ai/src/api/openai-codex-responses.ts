@@ -688,7 +688,9 @@ async function processStream(
 		}
 	};
 	await processResponsesStream(
-		trackCompletion(mapCodexEvents(parseSSE(response, options?.signal), output, model, options?.onProviderStreamEvent)),
+		trackCompletion(
+			mapCodexEvents(parseSSE(response, options?.signal), output, model, options?.onProviderStreamEvent),
+		),
 		output,
 		stream,
 		model,
