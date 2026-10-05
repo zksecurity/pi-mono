@@ -721,6 +721,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		isCerebras ||
 		provider === "xai" ||
 		baseUrl.includes("api.x.ai") ||
+		baseUrl.includes("cli-chat-proxy.grok.com") ||
 		isTogether ||
 		baseUrl.includes("chutes.ai") ||
 		isDeepSeek ||
@@ -744,7 +745,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		isZai ||
 		isDeepInfra;
 
-	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
+	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai") || baseUrl.includes("cli-chat-proxy.grok.com");
 	const isOpenRouterDeveloperRoleModel =
 		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
 	const cacheControlFormat =
@@ -2130,7 +2131,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					name: m.name || modelId,
 					api: "openai-responses",
 					provider: "xai",
-					baseUrl: "https://api.x.ai/v1",
+					baseUrl: "https://cli-chat-proxy.grok.com/v1",
 					compat: { ...XAI_RESPONSES_COMPAT },
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],

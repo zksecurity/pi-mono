@@ -8,7 +8,7 @@ export function xaiProvider(): Provider<"openai-responses"> {
 	return createProvider({
 		id: "xai",
 		name: "xAI",
-		baseUrl: "https://api.x.ai/v1",
+		baseUrl: "https://cli-chat-proxy.grok.com/v1",
 		auth: {
 			apiKey: envApiKeyAuth("xAI API key", ["XAI_API_KEY"]),
 			oauth: lazyOAuth({
