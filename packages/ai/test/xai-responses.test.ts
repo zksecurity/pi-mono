@@ -44,7 +44,7 @@ const customCompletionsModel: Model<"openai-completions"> = {
 	name: "Grok Custom",
 	api: "openai-completions",
 	provider: "xai",
-	baseUrl: "https://api.x.ai/v1",
+	baseUrl: "https://cli-chat-proxy.grok.com/v1",
 	reasoning: false,
 	input: ["text"],
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -176,7 +176,7 @@ describe("xAI Responses provider", () => {
 			},
 		);
 
-		expect(captured.url).toBe("https://api.x.ai/v1/responses");
+		expect(captured.url).toBe("https://cli-chat-proxy.grok.com/v1/responses");
 		expect(captured.headers.get("authorization")).toBe("Bearer xai-test-token");
 		expect(captured.headers.get("user-agent")).toBe(PI_USER_AGENT);
 		expect(captured.headers.get("session_id")).toBe("pi-session-123");
@@ -227,7 +227,7 @@ describe("xAI Responses provider", () => {
 			},
 		);
 
-		expect(captured.url).toBe("https://api.x.ai/v1/responses");
+		expect(captured.url).toBe("https://cli-chat-proxy.grok.com/v1/responses");
 		expect(captured.body).toMatchObject({
 			model: "grok-4.7",
 			store: false,
@@ -249,7 +249,7 @@ describe("xAI Responses provider", () => {
 			},
 		);
 
-		expect(captured.url).toBe("https://api.x.ai/v1/responses");
+		expect(captured.url).toBe("https://cli-chat-proxy.grok.com/v1/responses");
 		expect(captured.body).toMatchObject({
 			model: "grok-4.3",
 			store: false,

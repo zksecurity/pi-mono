@@ -1607,6 +1607,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		isCerebras ||
 		provider === "xai" ||
 		baseUrl.includes("api.x.ai") ||
+		baseUrl.includes("cli-chat-proxy.grok.com") ||
 		isTogether ||
 		baseUrl.includes("chutes.ai") ||
 		isDeepSeek ||
@@ -1628,7 +1629,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		isAntLing ||
 		isZai;
 
-	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
+	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai") || baseUrl.includes("cli-chat-proxy.grok.com");
 	const isOpenRouterDeveloperRoleModel =
 		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
 	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
