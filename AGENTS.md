@@ -123,3 +123,7 @@ For release preparation, publishing, verification, or recovery, load and follow 
 ## User Override
 
 If the user's instructions conflict with any rule in this document, ask for explicit confirmation before overriding. Only then execute their instructions.
+
+## zkao Fork
+
+This repo is our `zkao` fork. For fork maintenance, backups, commit layout, and releasing a `vX.Y.Z.zkao` version, load and follow [ZKAO.md](ZKAO.md).
