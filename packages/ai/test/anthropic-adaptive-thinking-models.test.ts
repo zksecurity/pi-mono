@@ -5,6 +5,7 @@ import type { Api, Model } from "../src/types.ts";
 const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
 	"anthropic/claude-fable-5",
 	"anthropic/claude-haiku-5-5",
+	"anthropic/claude-mythos-5-1",
 	"anthropic/claude-opus-4-8",
 	"anthropic/claude-opus-5",
 	"anthropic/claude-sonnet-5",
@@ -43,7 +44,9 @@ describe("Anthropic adaptive thinking model metadata", () => {
 					// #11121: MiniMax models with catalog effort levels require adaptive thinking.
 					modelId.startsWith("minimax/") ||
 					modelId.startsWith("minimax-cn/") ||
-					/(opus[-.](4[-.][678]|5)|sonnet[-.]4[-.]6|sonnet[-.]5|haiku[-.]5[-.]5|fable[-.]5)/.test(modelId),
+					/(opus[-.](4[-.][678]|5)|sonnet[-.]4[-.]6|sonnet[-.]5|haiku[-.]5[-.]5|fable[-.]5|mythos[-.]5)/.test(
+						modelId,
+					),
 			),
 		);
 	});
