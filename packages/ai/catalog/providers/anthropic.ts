@@ -1,5 +1,5 @@
 import type { Model } from "../../src/types.ts";
-import { defineProvider, mergeCompat, mergeThinking, modelsDevModels, withInputLimits } from "../define.ts";
+import { addMissing, defineProvider, mergeCompat, mergeThinking, modelsDevModels, withInputLimits } from "../define.ts";
 import {
 	claude55ThinkingLevels,
 	enableClaudeMidConvoEffort,
@@ -19,15 +19,41 @@ const MODELS_55 = new Set(["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku
 export default defineProvider({
 	id: "anthropic",
 	models: (ctx) =>
-		modelsDevModels(ctx, "anthropic", {
-			api: "anthropic-messages",
-			baseUrl: "https://api.anthropic.com",
-			map: (model) => {
-				if (MODELS_55.has(model.id)) mergeThinking(model, claude55ThinkingLevels(model.id));
-				if (MODELS_WITH_1M_CONTEXT.has(model.id)) model.contextWindow = 1000000;
-				return model;
-			},
-		}),
+		addMissing(
+			modelsDevModels(ctx, "anthropic", {
+				api: "anthropic-messages",
+				baseUrl: "https://api.anthropic.com",
+				map: (model) => {
+					if (MODELS_55.has(model.id)) mergeThinking(model, claude55ThinkingLevels(model.id));
+					if (MODELS_WITH_1M_CONTEXT.has(model.id)) model.contextWindow = 1000000;
+					return model;
+				},
+			}),
+			[
+				{
+					id: "claude-mythos-5-1",
+					name: "Claude Mythos 5.1",
+					api: "anthropic-messages",
+					provider: "anthropic",
+					baseUrl: "https://api.anthropic.com",
+					reasoning: true,
+					thinkingLevelMap: {
+						off: null,
+						minimal: null,
+						low: "low",
+						medium: "medium",
+						high: "high",
+						xhigh: "xhigh",
+						max: "max",
+					},
+					input: ["text", "image"],
+					cost: { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+					contextWindow: 1000000,
+					maxTokens: 128000,
+					compat: { supportsTemperature: false },
+				},
+			],
+		),
 	finalize: (model) => {
 		if (model.api !== "anthropic-messages") return;
 		const messagesModel = model as Model<"anthropic-messages">;
