@@ -2811,6 +2811,33 @@ async function generateModels() {
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
 	);
 
+	// Mythos 5.1 is available to verified organizations but absent from models.dev.
+	// https://platform.claude.com/docs/en/models/mythos-5-1/overview
+	if (!allModels.some((model) => model.provider === "anthropic" && model.id === "claude-mythos-5-1")) {
+		allModels.push({
+			id: "claude-mythos-5-1",
+			name: "Claude Mythos 5.1",
+			api: "anthropic-messages",
+			provider: "anthropic",
+			baseUrl: "https://api.anthropic.com",
+			reasoning: true,
+			thinkingLevelMap: {
+				off: null,
+				minimal: null,
+				low: "low",
+				medium: "medium",
+				high: "high",
+				xhigh: "xhigh",
+				max: "max",
+			},
+			input: ["text", "image"],
+			cost: { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+			contextWindow: 1000000,
+			maxTokens: 128000,
+			compat: { supportsTemperature: false },
+		});
+	}
+
 	// The authenticated Copilot catalog advertised these models on 2026-09-22,
 	// but models.dev did not include them yet.
 	const missingCopilotModels: Model<Api>[] = [
