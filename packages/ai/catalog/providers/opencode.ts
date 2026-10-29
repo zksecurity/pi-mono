@@ -18,6 +18,7 @@ import type { ModelsDevModel } from "../sources/models-dev.ts";
 const LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = new Set([
 	"opencode:deepseek-v4-flash",
 	"opencode:deepseek-v4.1-flash",
+	"opencode:deepseek-v4.1-flash",
 	"opencode:deepseek-v4-pro",
 	"opencode:kimi-k2.5",
 	"opencode:kimi-k2.6",
