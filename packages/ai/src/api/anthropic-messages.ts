@@ -44,7 +44,7 @@ import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
-import { parseJsonWithRepair } from "../utils/json-parse.ts";
+import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import {
 	applyOpenRouterReportedCost,
 	isOpenRouterModel,
@@ -53,7 +53,7 @@ import {
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { parseStreamingJson, ToolCallArgumentsStream } from "../utils/streaming-json.ts";
+import { ToolCallArgumentsStream } from "../utils/streaming-json.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import {
 	getCurrentTools,
