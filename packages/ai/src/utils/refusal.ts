@@ -118,64 +118,50 @@ export interface TextRefusalPattern {
 	id: string;
 	description: string;
 	phrases: string[];
-	/** Word boundaries exclude e.g. "helpfully"; sentence boundaries require '.', '!', or the end. */
-	boundary: "word" | "sentence";
-	location: "opening" | "after-offer";
+	/** Word/sentence boundaries restrict endings; "none" uses a literal substring match. */
+	boundary: "word" | "sentence" | "none";
+	location: "opening" | "after-offer" | "anywhere";
 }
 
-const DECLINE_PREFIXES = [
-	"i can't",
-	"i cant",
-	"i cannot",
-	"i won't",
-	"i will not",
-	"i am unable to",
-	"i'm unable to",
-	"i am not able to",
-	"i'm not able to",
-	"i must decline to",
-	"i'm not going to",
-];
-const EMPHATIC_DECLINE_PREFIXES = DECLINE_PREFIXES.flatMap((prefix) => [
-	prefix,
-	`${prefix} and won't`,
-	`${prefix} and will not`,
-]);
-
-function declinePhrases(actions: string[]): string[] {
-	return EMPHATIC_DECLINE_PREFIXES.flatMap((prefix) => actions.map((action) => `${prefix} ${action}`));
-}
-
+// Every phrase must match a recorded provider response in refusal.test.ts.
+// Keep observed wording rather than generating unverified prefix/action combinations.
 const TEXT_REFUSAL_PATTERNS: TextRefusalPattern[] = [
 	{
 		id: "decline-assistance",
-		description: "An opening decline to help, assist, comply, fulfill, fulfil, or support.",
-		phrases: declinePhrases(["help", "assist", "comply", "fulfill", "fulfil", "support"]),
+		description: "Observed opening declines to act or provide assistance.",
+		phrases: [
+			"i can't help",
+			"i can't assist",
+			"i can't fulfill",
+			"i'm unable to assist",
+			"i'm not able to assist",
+			"i'm not going to help",
+			"i won't help",
+			"i can't and won't",
+			"i cannot and will not",
+			"i won't write",
+		],
 		boundary: "word",
 		location: "opening",
 	},
 	{
 		id: "decline-request",
-		description: "A complete opening decline to do this/that/it or provide guidance on that.",
-		phrases: declinePhrases(["do this", "do that", "do it", "provide guidance on that"]),
+		description: "An observed complete opening decline to provide guidance.",
+		phrases: ["i can't provide guidance on that"],
 		boundary: "sentence",
 		location: "opening",
 	},
 	{
+		id: "decline-substring",
+		description: "An observed refusal phrase anywhere in the text, including quoted occurrences.",
+		phrases: ["i won't help with that"],
+		boundary: "none",
+		location: "anywhere",
+	},
+	{
 		id: "decline-harmful-guidance",
-		description: "A decline to provide harmful guidance; 'I can't provide' alone is not sufficient.",
-		phrases: declinePhrases([
-			...["information or guidance", "information"].flatMap((object) =>
-				["illegal", "harmful", "illegal or harmful"].map(
-					(activity) => `provide ${object} on ${activity} activities`,
-				),
-			),
-			...["for", "on how to"].flatMap((preposition) =>
-				["creating malicious software", "harm others", "hacking", "compromising"].map(
-					(action) => `provide instructions ${preposition} ${action}`,
-				),
-			),
-		]),
+		description: "An observed opening decline to provide harmful guidance.",
+		phrases: ["i can't provide information or guidance on illegal or harmful activities"],
 		boundary: "word",
 		location: "opening",
 	},
@@ -193,8 +179,8 @@ const TEXT_REFUSAL_PATTERNS: TextRefusalPattern[] = [
  * Return independent, JSON-serializable copies of the active text rules for UI display.
  * Matching folds case, curly apostrophes, and whitespace. Opening rules allow an
  * apology, "No.", or "I understand …, but" before the phrase. All rules require
- * stopReason "stop" and no tool calls. Only the opening is matched; the total
- * response length does not affect classification.
+ * stopReason "stop" and no tool calls. Each rule declares where it matches;
+ * the total response length does not affect classification.
  */
 export function getTextRefusalPatterns(): TextRefusalPattern[] {
 	return TEXT_REFUSAL_PATTERNS.map((pattern) => ({ ...pattern, phrases: [...pattern.phrases] }));
@@ -205,6 +191,7 @@ function isShortClause(text: string): boolean {
 }
 
 function phraseMatches(text: string, phrase: string, boundary: TextRefusalPattern["boundary"]): boolean {
+	if (boundary === "none") return text.includes(phrase);
 	if (!text.startsWith(phrase)) return false;
 	const rest = text.slice(phrase.length);
 	if (boundary === "sentence") {
@@ -274,7 +261,8 @@ export function classifyRefusal(message: AssistantMessage): RefusalClassificatio
 		afterOffer = normalized.slice(refusalStart + 1);
 	}
 	for (const pattern of TEXT_REFUSAL_PATTERNS) {
-		const candidate = pattern.location === "opening" ? opening : afterOffer;
+		let candidate = pattern.location === "opening" ? opening : afterOffer;
+		if (pattern.location === "anywhere") candidate = normalized.replace(/\s+/g, " ");
 		if (candidate === undefined) continue;
 		const phrase = pattern.phrases.find((phrase) => phraseMatches(candidate, phrase, pattern.boundary));
 		if (phrase) return { kind: "refusal", source: "text", textMatch: { ruleId: pattern.id, phrase } };

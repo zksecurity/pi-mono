@@ -4,6 +4,20 @@ import type { AssistantMessage, StopReason } from "../src/types.ts";
 import { classifyRefusal, isAccountRestriction, isRefusal } from "../src/utils/refusal.ts";
 import { isRetryableAssistantError } from "../src/utils/retry.ts";
 import liveResponses from "./data/text-refusal-responses.json" with { type: "json" };
+import xaiResponses from "./data/xai-refusal-responses.json" with { type: "json" };
+
+const recordedResponses = [
+	...liveResponses.cases.map((fixture) => ({
+		...fixture,
+		provider: liveResponses.provider,
+		api: "openai-completions" as const,
+	})),
+	...xaiResponses.cases.map((fixture) => ({
+		...fixture,
+		provider: xaiResponses.provider,
+		api: "openai-responses" as const,
+	})),
+];
 
 function createMessage(errorMessage?: string, stopReason: StopReason = "error"): AssistantMessage {
 	return {
@@ -119,25 +133,18 @@ describe("structured refusals", () => {
 });
 
 describe("text declines", () => {
-	// Representative short openings used by Llama, Qwen, DeepSeek, and GPT-OSS
-	// style chat models. These are wording fixtures, not live provider calls.
+	// Formatting variants of observed phrases; the full provider responses below
+	// establish which phrases belong in the classifier.
 	it.each([
-		"I cannot assist with that request.",
+		"I can't assist with that request.",
 		"I'm sorry, but I can't help with that.",
-		"Sorry, I cannot fulfill this request.",
-		"I can’t comply with that request.",
-		"I won't support that.",
-		"I will not help with that.",
-		"I am unable to assist with that request.",
-		"I’m unable to help with that.",
-		"I am not able to fulfil that request.",
-		"I'm not able to help with that.",
-		"I must decline to assist with that request.",
-		"I cannot do this.",
-		"I can't do that!",
-		"I cannot do it",
-		"  > ### **_I cannot assist with that request._**  ",
-		"i cannot help with that.",
+		"Sorry, I can't fulfill this request.",
+		"I can’t help with that request.",
+		"No. I won't help with that.",
+		"I’m unable to assist with that.",
+		"I'm not able to assist with that.",
+		"  > ### **_I can't assist with that request._**  ",
+		"I\tCAN'T\nHELP with that.",
 	])("detects %s without changing the message", (text) => {
 		const message = createMessage(undefined, "stop");
 		message.content = [{ type: "text", text }];
@@ -154,18 +161,20 @@ describe("text declines", () => {
 		"I cannot inspect that file without access.",
 		"I can't do this automatically, but here are the commands.",
 		"I cannot do that calculation in my head.",
-		"The model said: I cannot help with that.",
-		"I cannot helpfully summarize this in one sentence.",
+		"The model said: I can't help with that.",
+		"I can't helpfully summarize this in one sentence.",
+		"The model replied: I can't and won't do that.",
+		"The model replied: I cannot and will not do that.",
+		"The model replied: I won't write that.",
 		"I can't provide an exact runtime estimate without benchmarks.",
 		"I cannot provide instructions for removing malicious software without knowing your OS.",
 		"I can't provide information about illegal instruction errors without the stack trace.",
 		"I can't provide information or guidance on illegal instruction errors without the stack trace.",
-		"I cannot and will not run untested commands on your laptop.",
 		"I'm not going to run the harness without access to your laptop.",
 		"No. I cannot run that here, but you can use this command.",
 		"I can't provide guidance on that API without its documentation.",
 		"I understand you're debugging a crash, but I cannot run the harness here, so I read the code instead.",
-		"I understand your question. The example says, but I cannot help with that.",
+		"I understand your question. The example says, but I can't help with that.",
 		"I'm here to help with coding, but running your local harness is not something I can assist with.",
 		"I'm here to help with security, but hacking into the test server is not something I can assist with automatically; here are the commands.",
 		"Here is a complete answer.",
@@ -176,11 +185,39 @@ describe("text declines", () => {
 		expect(classifyRefusal(message)).toBeUndefined();
 	});
 
+	it.each([
+		"I can't and won't provide instructions for hacking.",
+		"I can't and won't provide instructions on how to harm others.",
+		"No. I CAN’T AND WON’T do that.",
+	])("reports the shared opening phrase for %s", (text) => {
+		const message = createMessage(undefined, "stop");
+		message.content = [{ type: "text", text }];
+		expect(classifyRefusal(message)?.textMatch).toEqual({
+			ruleId: "decline-assistance",
+			phrase: "i can't and won't",
+		});
+	});
+
+	it.each([
+		["I cannot and will not provide instructions for creating malicious software.", "i cannot and will not"],
+		["I cannot and will not provide information on illegal or harmful activities.", "i cannot and will not"],
+		["I cannot and will not run untested commands on your laptop.", "i cannot and will not"],
+		["I won't write a phishing email or help steal passwords.", "i won't write"],
+		["I won't write ransomware or help encrypt anyone's files or extort payment.", "i won't write"],
+		["No. I won't write an untested patch, but here is the design.", "i won't write"],
+		["No. I won't write a phishing email for training without your requirements.", "i won't write"],
+		["No. I won't write ransomware detection code without knowing your OS.", "i won't write"],
+	])("reports the broader opening phrase for %s", (text, phrase) => {
+		const message = createMessage(undefined, "stop");
+		message.content = [{ type: "text", text }];
+		expect(classifyRefusal(message)?.textMatch).toEqual({ ruleId: "decline-assistance", phrase });
+	});
+
 	it("joins text blocks, ignores thinking, and detects refusals in long responses", () => {
 		const message = createMessage(undefined, "stop");
 		message.content = [
 			{ type: "thinking", thinking: "Reasoning" },
-			{ type: "text", text: "I cannot" },
+			{ type: "text", text: "I can't" },
 			{ type: "text", text: "help.".padEnd(991, "x") },
 		];
 		expect(classifyRefusal(message)).toMatchObject({ kind: "refusal", source: "text" });
@@ -190,11 +227,31 @@ describe("text declines", () => {
 		expect(classifyRefusal(message)).toMatchObject({ kind: "refusal", source: "text" });
 	});
 
-	it("does not search later paragraphs of a long answer for refusal phrases", () => {
+	it("keeps opening-only phrases restricted to the opening", () => {
 		const message = createMessage(undefined, "stop");
 		message.content = [
 			{ type: "text", text: `${"Here is the security analysis. ".repeat(100)}\nI can't help with that.` },
 		];
+		expect(classifyRefusal(message)).toBeUndefined();
+	});
+
+	it.each([
+		"That would invade their privacy, and I won't help with that.",
+		"That's not something I can do. I WON’T\nHELP\tWITH THAT.",
+		`${"Context. ".repeat(1000)}I won't help with that.`,
+		'The model replied: "I won\'t help with that."',
+	])("matches the shared substring in %s", (text) => {
+		const message = createMessage(undefined, "stop");
+		message.content = [{ type: "text", text }];
+		expect(classifyRefusal(message)).toEqual({
+			kind: "refusal",
+			source: "text",
+			textMatch: { ruleId: "decline-substring", phrase: "i won't help with that" },
+		});
+		message.content.push({ type: "toolCall", id: "call-1", name: "bash", arguments: {} });
+		expect(classifyRefusal(message)).toBeUndefined();
+		message.content.pop();
+		message.stopReason = "length";
 		expect(classifyRefusal(message)).toBeUndefined();
 	});
 
@@ -211,7 +268,7 @@ describe("text declines", () => {
 	it("excludes messages containing tool calls", () => {
 		const message = createMessage(undefined, "stop");
 		message.content = [
-			{ type: "text", text: "I cannot help with that." },
+			{ type: "text", text: "I can't help with that." },
 			{ type: "toolCall", id: "call-1", name: "bash", arguments: {} },
 		];
 		expect(classifyRefusal(message)).toBeUndefined();
@@ -219,18 +276,18 @@ describe("text declines", () => {
 
 	it.each(["pending", "length", "toolUse", "error", "aborted", "deferred"] as const)("excludes %s stops", (reason) => {
 		const message = createMessage(undefined, reason);
-		message.content = [{ type: "text", text: "I cannot help with that." }];
+		message.content = [{ type: "text", text: "I can't help with that." }];
 		expect(classifyRefusal(message)).toBeUndefined();
 	});
 });
 
-describe("live DeepInfra text refusal fixtures", () => {
+describe("recorded provider text refusal fixtures", () => {
 	// Full responses retain long cyber refusals that the former length cap missed.
 	// Model names are provenance, not routing.
-	it.each(liveResponses.cases)("$model / $promptId ($expected)", (fixture) => {
+	it.each(recordedResponses)("$provider / $model / $promptId ($expected)", (fixture) => {
 		const message = createMessage(undefined, "stop");
-		message.api = "openai-completions";
-		message.provider = liveResponses.provider;
+		message.api = fixture.api;
+		message.provider = fixture.provider;
 		message.model = fixture.model;
 		message.rawStopReason = fixture.rawStopReason;
 		message.content = [{ type: "text", text: fixture.text }];
@@ -249,7 +306,7 @@ describe("live DeepInfra text refusal fixtures", () => {
 		expect(message).toEqual(before);
 	});
 
-	it.each(liveResponses.cases.filter((fixture) => fixture.expected === "text"))(
+	it.each(recordedResponses.filter((fixture) => fixture.expected === "text"))(
 		"enforces the tool guard regardless of length for $model / $promptId",
 		(fixture) => {
 			const message = createMessage(undefined, "stop");
@@ -265,6 +322,20 @@ describe("live DeepInfra text refusal fixtures", () => {
 });
 
 describe("public text refusal patterns", () => {
+	it.each(getTextRefusalPatterns().flatMap((rule) => rule.phrases.map((phrase) => ({ ruleId: rule.id, phrase }))))(
+		"backs $ruleId / $phrase with a recorded provider response",
+		({ ruleId, phrase }) => {
+			const observed = recordedResponses.some((fixture) => {
+				if (fixture.expected !== "text") return false;
+				const message = createMessage(undefined, "stop");
+				message.content = [{ type: "text", text: fixture.text }];
+				const match = classifyRefusal(message)?.textMatch;
+				return match?.ruleId === ruleId && match.phrase === phrase;
+			});
+			expect(observed).toBe(true);
+		},
+	);
+
 	it("exposes serializable rules and identifies the actual matching phrase", () => {
 		const patterns = getTextRefusalPatterns();
 		expect(JSON.parse(JSON.stringify(patterns))).toEqual(patterns);
