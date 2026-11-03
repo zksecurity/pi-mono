@@ -109,12 +109,110 @@ export type RefusalKind = "refusal" | "accountRestriction";
 export interface RefusalClassification {
 	kind: RefusalKind;
 	source: NonNullable<AssistantMessage["refusal"]>["source"] | "pattern" | "text";
+	/** Normalized phrase and rule that matched, populated for text refusals. */
+	textMatch?: { ruleId: string; phrase: string };
 }
 
-// Keep the opening and verb list narrow: inability to run, reproduce, or inspect
-// something is a capability limitation, not evidence of a refusal.
-const TEXT_DECLINE_PATTERN =
-	/^(?:I['’]m sorry,?\s+(?:but\s+)?|Sorry,?\s+(?:but\s+)?)?I\s*(?:can['’]?t|cannot|won['’]t|will not|am unable to|['’]m unable to|am not able to|['’]m not able to|must decline to)\s+(?:(?:help|assist|comply|fulfill|fulfil|support)\b|do (?:this|that|it)(?=\s*(?:[.!]|$)))/i;
+/** Displayable literal phrases used by the text classifier, not model-specific rules. */
+export interface TextRefusalPattern {
+	id: string;
+	description: string;
+	phrases: string[];
+	/** Word boundaries exclude e.g. "helpfully"; sentence boundaries require '.', '!', or the end. */
+	boundary: "word" | "sentence";
+	location: "opening" | "after-offer";
+}
+
+const DECLINE_PREFIXES = [
+	"i can't",
+	"i cant",
+	"i cannot",
+	"i won't",
+	"i will not",
+	"i am unable to",
+	"i'm unable to",
+	"i am not able to",
+	"i'm not able to",
+	"i must decline to",
+	"i'm not going to",
+];
+const EMPHATIC_DECLINE_PREFIXES = DECLINE_PREFIXES.flatMap((prefix) => [
+	prefix,
+	`${prefix} and won't`,
+	`${prefix} and will not`,
+]);
+
+function declinePhrases(actions: string[]): string[] {
+	return EMPHATIC_DECLINE_PREFIXES.flatMap((prefix) => actions.map((action) => `${prefix} ${action}`));
+}
+
+const TEXT_REFUSAL_PATTERNS: TextRefusalPattern[] = [
+	{
+		id: "decline-assistance",
+		description: "An opening decline to help, assist, comply, fulfill, fulfil, or support.",
+		phrases: declinePhrases(["help", "assist", "comply", "fulfill", "fulfil", "support"]),
+		boundary: "word",
+		location: "opening",
+	},
+	{
+		id: "decline-request",
+		description: "A complete opening decline to do this/that/it or provide guidance on that.",
+		phrases: declinePhrases(["do this", "do that", "do it", "provide guidance on that"]),
+		boundary: "sentence",
+		location: "opening",
+	},
+	{
+		id: "decline-harmful-guidance",
+		description: "A decline to provide harmful guidance; 'I can't provide' alone is not sufficient.",
+		phrases: declinePhrases([
+			...["information or guidance", "information"].flatMap((object) =>
+				["illegal", "harmful", "illegal or harmful"].map(
+					(activity) => `provide ${object} on ${activity} activities`,
+				),
+			),
+			...["for", "on how to"].flatMap((preposition) =>
+				["creating malicious software", "harm others", "hacking", "compromising"].map(
+					(action) => `provide instructions ${preposition} ${action}`,
+				),
+			),
+		]),
+		boundary: "word",
+		location: "opening",
+	},
+	{
+		id: "decline-after-offer",
+		description:
+			"After 'I'm here to help …, but hacking into …' in the opening sentence; each gap is at most 160 characters.",
+		phrases: ["is not something i can assist with"],
+		boundary: "sentence",
+		location: "after-offer",
+	},
+];
+
+/**
+ * Return independent, JSON-serializable copies of the active text rules for UI display.
+ * Matching folds case, curly apostrophes, and whitespace. Opening rules allow an
+ * apology, "No.", or "I understand …, but" before the phrase. All rules require
+ * stopReason "stop", no tool calls, and at most 1000 characters of trimmed text.
+ */
+export function getTextRefusalPatterns(): TextRefusalPattern[] {
+	return TEXT_REFUSAL_PATTERNS.map((pattern) => ({ ...pattern, phrases: [...pattern.phrases] }));
+}
+
+function isShortClause(text: string): boolean {
+	return text.length > 0 && text.length <= 160 && ![".", "!", "?", "\n"].some((mark) => text.includes(mark));
+}
+
+function phraseMatches(text: string, phrase: string, boundary: TextRefusalPattern["boundary"]): boolean {
+	if (!text.startsWith(phrase)) return false;
+	const rest = text.slice(phrase.length);
+	if (boundary === "sentence") {
+		const trimmed = rest.trimStart();
+		return trimmed === "" || trimmed.startsWith(".") || trimmed.startsWith("!");
+	}
+	const next = rest.charAt(0);
+	return next === "" || !"abcdefghijklmnopqrstuvwxyz0123456789_".includes(next);
+}
 
 /**
  * Classify an assistant message, or return `undefined` when it is neither
@@ -137,7 +235,50 @@ export function classifyRefusal(message: AssistantMessage): RefusalClassificatio
 		.join("\n")
 		.trim()
 		.replace(/^[*_#>\s]+/, "");
-	if (text.length <= 1000 && TEXT_DECLINE_PATTERN.test(text)) return { kind: "refusal", source: "text" };
+	if (text.length > 1000) return undefined;
+	// Regex is used only for whitespace normalization, not refusal matching.
+	const normalized = text
+		.toLowerCase()
+		.replaceAll("’", "'")
+		.replace(/[^\S\n]+/g, " ");
+	let opening = normalized;
+	const acknowledgementEnd = opening.indexOf(", but ");
+	if (
+		opening.startsWith("i understand ") &&
+		acknowledgementEnd > 13 &&
+		isShortClause(opening.slice(13, acknowledgementEnd))
+	) {
+		opening = opening.slice(acknowledgementEnd + 6);
+	} else {
+		const preamble = ["i'm sorry,", "i'm sorry", "sorry,", "sorry", "no."].find(
+			(prefix) => opening.startsWith(`${prefix} `) || opening.startsWith(`${prefix}\n`),
+		);
+		if (preamble) {
+			opening = opening.slice(preamble.length).trimStart();
+			if (opening.startsWith("but ")) opening = opening.slice(4);
+		}
+	}
+	opening = opening.replace(/\s+/g, " ");
+	let afterOffer: string | undefined;
+	const offerStart = "i'm here to help ";
+	const offerSeparator = ", but hacking into ";
+	const offerEnd = normalized.indexOf(offerSeparator);
+	const refusalStart = normalized.indexOf(" is not something i can assist with", offerEnd + offerSeparator.length);
+	if (
+		normalized.startsWith(offerStart) &&
+		offerEnd >= 0 &&
+		refusalStart >= 0 &&
+		isShortClause(normalized.slice(offerStart.length, offerEnd)) &&
+		isShortClause(normalized.slice(offerEnd + offerSeparator.length, refusalStart))
+	) {
+		afterOffer = normalized.slice(refusalStart + 1);
+	}
+	for (const pattern of TEXT_REFUSAL_PATTERNS) {
+		const candidate = pattern.location === "opening" ? opening : afterOffer;
+		if (candidate === undefined) continue;
+		const phrase = pattern.phrases.find((phrase) => phraseMatches(candidate, phrase, pattern.boundary));
+		if (phrase) return { kind: "refusal", source: "text", textMatch: { ruleId: pattern.id, phrase } };
+	}
 	return undefined;
 }
 

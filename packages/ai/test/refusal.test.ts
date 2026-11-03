@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { getTextRefusalPatterns } from "../src/index.ts";
 import type { AssistantMessage, StopReason } from "../src/types.ts";
 import { classifyRefusal, isAccountRestriction, isRefusal } from "../src/utils/refusal.ts";
 import { isRetryableAssistantError } from "../src/utils/retry.ts";
+import liveResponses from "./data/text-refusal-responses.json" with { type: "json" };
 
 function createMessage(errorMessage?: string, stopReason: StopReason = "error"): AssistantMessage {
 	return {
@@ -140,7 +142,7 @@ describe("text declines", () => {
 		const message = createMessage(undefined, "stop");
 		message.content = [{ type: "text", text }];
 		const before = structuredClone(message);
-		expect(classifyRefusal(message)).toEqual({ kind: "refusal", source: "text" });
+		expect(classifyRefusal(message)).toMatchObject({ kind: "refusal", source: "text" });
 		expect(isRefusal(message)).toBe(true);
 		expect(isAccountRestriction(message)).toBe(false);
 		expect(message).toEqual(before);
@@ -154,6 +156,18 @@ describe("text declines", () => {
 		"I cannot do that calculation in my head.",
 		"The model said: I cannot help with that.",
 		"I cannot helpfully summarize this in one sentence.",
+		"I can't provide an exact runtime estimate without benchmarks.",
+		"I cannot provide instructions for removing malicious software without knowing your OS.",
+		"I can't provide information about illegal instruction errors without the stack trace.",
+		"I can't provide information or guidance on illegal instruction errors without the stack trace.",
+		"I cannot and will not run untested commands on your laptop.",
+		"I'm not going to run the harness without access to your laptop.",
+		"No. I cannot run that here, but you can use this command.",
+		"I can't provide guidance on that API without its documentation.",
+		"I understand you're debugging a crash, but I cannot run the harness here, so I read the code instead.",
+		"I understand your question. The example says, but I cannot help with that.",
+		"I'm here to help with coding, but running your local harness is not something I can assist with.",
+		"I'm here to help with security, but hacking into the test server is not something I can assist with automatically; here are the commands.",
 		"Here is a complete answer.",
 		"",
 	])("does not classify %s", (text) => {
@@ -169,7 +183,7 @@ describe("text declines", () => {
 			{ type: "text", text: "I cannot" },
 			{ type: "text", text: "help.".padEnd(991, "x") },
 		];
-		expect(classifyRefusal(message)).toEqual({ kind: "refusal", source: "text" });
+		expect(classifyRefusal(message)).toMatchObject({ kind: "refusal", source: "text" });
 		message.content.push({ type: "text", text: "x" });
 		expect(classifyRefusal(message)).toBeUndefined();
 	});
@@ -187,6 +201,72 @@ describe("text declines", () => {
 		const message = createMessage(undefined, reason);
 		message.content = [{ type: "text", text: "I cannot help with that." }];
 		expect(classifyRefusal(message)).toBeUndefined();
+	});
+});
+
+describe("live DeepInfra text refusal fixtures", () => {
+	// These fixtures retain the entire response: truncating to an opening would
+	// hide misses caused by the length cap. Model names are provenance, not routing.
+	it.each(liveResponses.cases)("$model / $promptId ($expected)", (fixture) => {
+		const message = createMessage(undefined, "stop");
+		message.api = "openai-completions";
+		message.provider = liveResponses.provider;
+		message.model = fixture.model;
+		message.rawStopReason = fixture.rawStopReason;
+		message.content = [{ type: "text", text: fixture.text }];
+		expect(fixture.stopReason).toBe("stop");
+		const before = structuredClone(message);
+		if (fixture.expected === "text") {
+			const classification = classifyRefusal(message);
+			expect(classification).toMatchObject({ kind: "refusal", source: "text" });
+			const rule = getTextRefusalPatterns().find((rule) => rule.id === classification?.textMatch?.ruleId);
+			expect(rule?.phrases).toContain(classification?.textMatch?.phrase);
+			expect(isRefusal(message)).toBe(true);
+		} else {
+			expect(classifyRefusal(message)).toBeUndefined();
+			expect(isRefusal(message)).toBe(false);
+		}
+		expect(message).toEqual(before);
+		if (fixture.expected === "length-cap") expect(fixture.text.length).toBeGreaterThan(1000);
+	});
+
+	it.each(liveResponses.cases.filter((fixture) => fixture.expected === "text"))(
+		"enforces tool and length guards for $model / $promptId",
+		(fixture) => {
+			const message = createMessage(undefined, "stop");
+			message.content = [
+				{ type: "text", text: fixture.text },
+				{ type: "toolCall", id: "call-1", name: "bash", arguments: {} },
+			];
+			expect(classifyRefusal(message)).toBeUndefined();
+			message.content = [{ type: "text", text: fixture.text.padEnd(1001, "x") }];
+			expect(classifyRefusal(message)).toBeUndefined();
+		},
+	);
+});
+
+describe("public text refusal patterns", () => {
+	it("exposes serializable rules and identifies the actual matching phrase", () => {
+		const patterns = getTextRefusalPatterns();
+		expect(JSON.parse(JSON.stringify(patterns))).toEqual(patterns);
+		const message = createMessage(undefined, "stop");
+		message.content = [{ type: "text", text: "No. I’m not going to help with that." }];
+		expect(classifyRefusal(message)).toEqual({
+			kind: "refusal",
+			source: "text",
+			textMatch: { ruleId: "decline-assistance", phrase: "i'm not going to help" },
+		});
+	});
+
+	it("does not let callers mutate the active rules through returned data", () => {
+		const patterns = getTextRefusalPatterns();
+		patterns[0].phrases.splice(0);
+		patterns[0].id = "changed";
+		patterns.splice(1);
+		expect(getTextRefusalPatterns()[0].phrases).toContain("i can't help");
+		const message = createMessage(undefined, "stop");
+		message.content = [{ type: "text", text: "I can't help with that." }];
+		expect(classifyRefusal(message)?.textMatch).toEqual({ ruleId: "decline-assistance", phrase: "i can't help" });
 	});
 });
 
