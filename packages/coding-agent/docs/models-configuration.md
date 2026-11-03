@@ -144,6 +144,7 @@ Also applies to `azure-openai-responses` and `openai-codex-responses`.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
+| `replayReasoning` | boolean | `true` | Whether to replay reasoning items. Disable for providers such as Meta Muse that expire server-referenced reasoning items. |
 | `supportsDeveloperRole` | boolean | `true` | Whether the provider supports the developer role instead of system. |
 | `supportsMidConvoSystemMessages` | boolean | `false` | Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. The generated catalog enables this for verified models. |
 | `sessionAffinityFormat` | `"openai" \| "openai-nosession" \| "openrouter"` |  | Session-affinity header format. openai sends session_id and x-client-request-id; openai-nosession sends x-client-request-id; openrouter sends x-session-id. Does not affect prompt_cache_key. Default: auto-detected. |
@@ -155,7 +156,6 @@ Also applies to `azure-openai-responses` and `openai-codex-responses`.
 | `supportsExplicitPromptCacheMode` | boolean | `false` | Whether the model accepts prompt_cache_options. Older OpenAI models reject the parameter. |
 | `supportsMidConvoEffort` | boolean | `false` | Whether thinking level changes are sent as configuration_update input items instead of changing reasoning.effort, so a change keeps the prompt cache. Only used by the openai-responses API, and ignored with Sign in with ChatGPT on the openai provider. |
 | `supportsMaxOutputTokens` | boolean | `true` | Whether the provider accepts max_output_tokens. Some Codex-protocol gateways reject it. |
-| `replayReasoning` | boolean | `true` | Whether to replay reasoning items. Disable for providers such as Meta Muse that expire server-referenced reasoning items. |
 
 ### `anthropic-messages`
 
