@@ -176,7 +176,7 @@ describe("text declines", () => {
 		expect(classifyRefusal(message)).toBeUndefined();
 	});
 
-	it("joins text blocks, ignores thinking, and enforces the exact length cap", () => {
+	it("joins text blocks, ignores thinking, and detects refusals in long responses", () => {
 		const message = createMessage(undefined, "stop");
 		message.content = [
 			{ type: "thinking", thinking: "Reasoning" },
@@ -185,7 +185,27 @@ describe("text declines", () => {
 		];
 		expect(classifyRefusal(message)).toMatchObject({ kind: "refusal", source: "text" });
 		message.content.push({ type: "text", text: "x" });
+		expect(classifyRefusal(message)).toMatchObject({ kind: "refusal", source: "text" });
+		message.content.push({ type: "text", text: "Alternative defensive guidance. ".repeat(1000) });
+		expect(classifyRefusal(message)).toMatchObject({ kind: "refusal", source: "text" });
+	});
+
+	it("does not search later paragraphs of a long answer for refusal phrases", () => {
+		const message = createMessage(undefined, "stop");
+		message.content = [
+			{ type: "text", text: `${"Here is the security analysis. ".repeat(100)}\nI can't help with that.` },
+		];
 		expect(classifyRefusal(message)).toBeUndefined();
+	});
+
+	it("detects native cyber blocks even with long text and tool calls", () => {
+		const message = createMessage(CODEX_CYBER_BLOCK);
+		message.refusal = { source: "error_code", raw: "cyber_safety" };
+		message.content = [
+			{ type: "text", text: "Partial answer. ".repeat(1000) },
+			{ type: "toolCall", id: "call-1", name: "bash", arguments: {} },
+		];
+		expect(classifyRefusal(message)).toEqual({ kind: "refusal", source: "error_code" });
 	});
 
 	it("excludes messages containing tool calls", () => {
@@ -205,8 +225,8 @@ describe("text declines", () => {
 });
 
 describe("live DeepInfra text refusal fixtures", () => {
-	// These fixtures retain the entire response: truncating to an opening would
-	// hide misses caused by the length cap. Model names are provenance, not routing.
+	// Full responses retain long cyber refusals that the former length cap missed.
+	// Model names are provenance, not routing.
 	it.each(liveResponses.cases)("$model / $promptId ($expected)", (fixture) => {
 		const message = createMessage(undefined, "stop");
 		message.api = "openai-completions";
@@ -227,11 +247,10 @@ describe("live DeepInfra text refusal fixtures", () => {
 			expect(isRefusal(message)).toBe(false);
 		}
 		expect(message).toEqual(before);
-		if (fixture.expected === "length-cap") expect(fixture.text.length).toBeGreaterThan(1000);
 	});
 
 	it.each(liveResponses.cases.filter((fixture) => fixture.expected === "text"))(
-		"enforces tool and length guards for $model / $promptId",
+		"enforces the tool guard regardless of length for $model / $promptId",
 		(fixture) => {
 			const message = createMessage(undefined, "stop");
 			message.content = [
@@ -240,7 +259,7 @@ describe("live DeepInfra text refusal fixtures", () => {
 			];
 			expect(classifyRefusal(message)).toBeUndefined();
 			message.content = [{ type: "text", text: fixture.text.padEnd(1001, "x") }];
-			expect(classifyRefusal(message)).toBeUndefined();
+			expect(classifyRefusal(message)).toMatchObject({ kind: "refusal", source: "text" });
 		},
 	);
 });

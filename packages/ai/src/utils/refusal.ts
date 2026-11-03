@@ -193,7 +193,8 @@ const TEXT_REFUSAL_PATTERNS: TextRefusalPattern[] = [
  * Return independent, JSON-serializable copies of the active text rules for UI display.
  * Matching folds case, curly apostrophes, and whitespace. Opening rules allow an
  * apology, "No.", or "I understand …, but" before the phrase. All rules require
- * stopReason "stop", no tool calls, and at most 1000 characters of trimmed text.
+ * stopReason "stop" and no tool calls. Only the opening is matched; the total
+ * response length does not affect classification.
  */
 export function getTextRefusalPatterns(): TextRefusalPattern[] {
 	return TEXT_REFUSAL_PATTERNS.map((pattern) => ({ ...pattern, phrases: [...pattern.phrases] }));
@@ -235,7 +236,6 @@ export function classifyRefusal(message: AssistantMessage): RefusalClassificatio
 		.join("\n")
 		.trim()
 		.replace(/^[*_#>\s]+/, "");
-	if (text.length > 1000) return undefined;
 	// Regex is used only for whitespace normalization, not refusal matching.
 	const normalized = text
 		.toLowerCase()
