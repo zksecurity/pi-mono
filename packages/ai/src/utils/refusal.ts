@@ -10,17 +10,8 @@ import type { AssistantMessage } from "../types.ts";
  * the same refusal, which is why refusal patterns are deliberately kept out of
  * `RETRYABLE_PROVIDER_ERROR_PATTERN` in `retry.ts`.
  *
- * Detection is string-based, mirroring `overflow.ts`, because refusals reach an
- * `AssistantMessage` by two different routes and only the message text is common
- * to both:
- *
- * 1. Stop-reason mapping — Anthropic reports `stop_reason: "refusal"` and
- *    `openai-completions` reports `finish_reason: "content_filter"`; both are
- *    turned into `stopReason: "error"` plus text by their adapters.
- * 2. A thrown error — `openai-codex-responses` raises `CodexApiError` from
- *    `mapCodexEvents` before any stop reason exists, and the agent's
- *    `handleRunFailure` flattens it to `errorMessage`. A discriminator populated
- *    in the stop-reason mappers would be `undefined` here.
+ * Fallback for older messages and providers without a native refusal signal.
+ * Native signals take precedence over these error-message patterns.
  *
  * Provider-specific patterns (with example error messages):
  *
@@ -85,7 +76,7 @@ function matches(patterns: RegExp[], errorMessage: string): boolean {
 }
 
 /**
- * Check whether a failed assistant message is a content-scoped refusal that a
+ * Check whether an assistant message is a content-scoped refusal that a
  * different model might accept.
  *
  * Returns `false` for account-scoped restrictions ({@link isAccountRestriction}),
@@ -94,15 +85,11 @@ function matches(patterns: RegExp[], errorMessage: string): boolean {
  *
  * ## Custom providers
  *
- * If you use models this repo does not ship patterns for, refusals from them
- * will not be detected. To add support: trigger the refusal, read the resulting
- * `errorMessage`, and add a pattern to `REFUSAL_PATTERNS` in this file — or test
- * the `errorMessage` yourself before calling into a fallback chain.
+ * Custom adapters should set `refusal` from native signals. Error patterns and
+ * conservative text-decline detection cover messages without that field.
  */
 export function isRefusal(message: AssistantMessage): boolean {
-	if (message.stopReason !== "error" || !message.errorMessage) return false;
-	if (matches(ACCOUNT_RESTRICTION_PATTERNS, message.errorMessage)) return false;
-	return matches(REFUSAL_PATTERNS, message.errorMessage);
+	return classifyRefusal(message)?.kind === "refusal";
 }
 
 /**
@@ -116,20 +103,41 @@ export function isAccountRestriction(message: AssistantMessage): boolean {
 	return matches(ACCOUNT_RESTRICTION_PATTERNS, message.errorMessage);
 }
 
-/** Mutually exclusive classification of a failed assistant message. */
+/** Mutually exclusive classification of an assistant message. */
 export type RefusalKind = "refusal" | "accountRestriction";
 
+export interface RefusalClassification {
+	kind: RefusalKind;
+	source: NonNullable<AssistantMessage["refusal"]>["source"] | "pattern" | "text";
+}
+
+// Keep the opening and verb list narrow: inability to run, reproduce, or inspect
+// something is a capability limitation, not evidence of a refusal.
+const TEXT_DECLINE_PATTERN =
+	/^(?:I['’]m sorry,?\s+(?:but\s+)?|Sorry,?\s+(?:but\s+)?)?I\s*(?:can['’]?t|cannot|won['’]t|will not|am unable to|['’]m unable to|am not able to|['’]m not able to|must decline to)\s+(?:(?:help|assist|comply|fulfill|fulfil|support)\b|do (?:this|that|it)(?=\s*(?:[.!]|$)))/i;
+
 /**
- * Classify a failed assistant message, or return `undefined` when it is neither
+ * Classify an assistant message, or return `undefined` when it is neither
  * a refusal nor an account restriction.
  *
  * Account restrictions are checked first: their wording also mentions
  * cybersecurity, and misreading one as a refusal would send the caller down a
  * downgrade chain that fails at every hop.
  */
-export function classifyRefusal(message: AssistantMessage): RefusalKind | undefined {
-	if (isAccountRestriction(message)) return "accountRestriction";
-	if (isRefusal(message)) return "refusal";
+export function classifyRefusal(message: AssistantMessage): RefusalClassification | undefined {
+	if (isAccountRestriction(message)) return { kind: "accountRestriction", source: "pattern" };
+	if (message.refusal) return { kind: "refusal", source: message.refusal.source };
+	if (message.stopReason === "error" && message.errorMessage && matches(REFUSAL_PATTERNS, message.errorMessage)) {
+		return { kind: "refusal", source: "pattern" };
+	}
+	if (message.stopReason !== "stop" || message.content.some((block) => block.type === "toolCall")) return undefined;
+	const text = message.content
+		.filter((block) => block.type === "text")
+		.map((block) => block.text)
+		.join("\n")
+		.trim()
+		.replace(/^[*_#>\s]+/, "");
+	if (text.length <= 1000 && TEXT_DECLINE_PATTERN.test(text)) return { kind: "refusal", source: "text" };
 	return undefined;
 }
 

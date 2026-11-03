@@ -287,6 +287,7 @@ export async function retryAssistantCall(
  */
 export function isRetryableAssistantError(message: AssistantMessage): boolean {
 	if (message.stopReason !== "error" || !message.errorMessage) return false;
+	if (message.refusal) return false;
 	const errorMessage = message.errorMessage;
 	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage)) return false;
 	if (NON_RETRYABLE_REFUSAL_PATTERNS.some((pattern) => pattern.test(errorMessage))) return false;

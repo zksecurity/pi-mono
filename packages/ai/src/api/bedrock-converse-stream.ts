@@ -312,6 +312,9 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					handleContentBlockStop(item.contentBlockStop, blocks, output, stream);
 				} else if (item.messageStop) {
 					output.rawStopReason = item.messageStop.stopReason;
+					if (["content_filtered", "guardrail_intervened"].includes(item.messageStop.stopReason ?? "")) {
+						output.refusal = { source: "stop_reason", raw: item.messageStop.stopReason! };
+					}
 					const { stopReason, errorMessage } = mapStopReason(item.messageStop.stopReason);
 					output.stopReason = stopReason;
 					if (errorMessage) {

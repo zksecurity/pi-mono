@@ -10,15 +10,8 @@ import { normalizeContext } from "../src/utils/transcript.ts";
  * Guards the contract between the Anthropic adapter's stop-reason mapping and
  * refusal classification.
  *
- * Classification is string-based, so it depends on the exact `errorMessage`
- * `mapStopReason` produces — and for `stop_reason: "sensitive"` that text is the
- * adapter's own wording ("Provider stopped with: sensitive"), not anything the
- * provider sends. Asserting the literal string in a unit test would let an
- * upstream rephrase silently disable the match: the unit test would still pass
- * against its hardcoded copy while real refusals stopped being detected.
- *
- * These tests derive the message by running the adapter, so a rephrase fails
- * here instead.
+ * Derive messages from wire fixtures so structured signals and readable error
+ * details are both verified through the adapter.
  */
 
 function createSseResponse(events: Array<{ event: string; data: string }>): Response {
@@ -88,8 +81,7 @@ describe("Anthropic refusal classification", () => {
 
 		expect(result.stopReason).toBe("error");
 		expect(result.errorMessage).toBeTruthy();
-		// Derived from the adapter, not hardcoded: if mapStopReason's wording
-		// changes without a matching pattern in utils/refusal.ts, this fails.
+		expect(result.refusal).toEqual({ source: "stop_reason", raw: "sensitive" });
 		expect(isRefusal(result)).toBe(true);
 	});
 
@@ -100,6 +92,11 @@ describe("Anthropic refusal classification", () => {
 
 		expect(result.stopReason).toBe("error");
 		expect(result.errorMessage).toBe(explanation);
+		expect(result.refusal?.source).toBe("stop_reason");
+		expect(JSON.parse(result.refusal!.raw)).toEqual({
+			stop_reason: "refusal",
+			stop_details: { type: "refusal", category: "cyber", explanation },
+		});
 		expect(isRefusal(result)).toBe(true);
 	});
 
@@ -117,5 +114,24 @@ describe("Anthropic refusal classification", () => {
 
 		expect(result.stopReason).toBe("stop");
 		expect(isRefusal(result)).toBe(false);
+	});
+
+	it("captures a refusal without stop_details", async () => {
+		const result = await runWithStopReason("refusal");
+		expect(result.refusal).toEqual({ source: "stop_reason", raw: "refusal" });
+	});
+
+	it("captures sensitive stop details", async () => {
+		const details = { type: "refusal", category: "cyber", explanation: "Request blocked." };
+		const result = await runWithStopReason("sensitive", details);
+		expect(JSON.parse(result.refusal!.raw)).toEqual({ stop_reason: "sensitive", stop_details: details });
+	});
+
+	it("keeps an unknown stop reason as an ordinary error", async () => {
+		const result = await runWithStopReason("future_reason");
+		expect(result.stopReason).toBe("error");
+		expect(result.rawStopReason).toBe("future_reason");
+		expect(result.errorMessage).toBe("Provider stopped with: future_reason");
+		expect(result.refusal).toBeUndefined();
 	});
 });

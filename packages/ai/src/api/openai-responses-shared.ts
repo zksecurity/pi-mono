@@ -579,6 +579,44 @@ type ResponsesOutputSlot =
 
 type ToolCallOutputSlot = Extract<ResponsesOutputSlot, { type: "toolCall" }>;
 
+// Explicit provider codes only: account restrictions and invalid prompts must
+// not be mistaken for request-scoped policy blocks.
+const OPENAI_REFUSAL_CODES = new Set([
+	"content_filter",
+	"content_policy_violation",
+	"image_content_policy_violation",
+	"cyber_policy",
+	"bio_policy",
+	"misalignment_policy_violation",
+]);
+
+/** Read SDK errors and raw HTTP/SSE error envelopes before their codes are flattened. */
+export function getOpenAIErrorRefusal(error: unknown): AssistantMessage["refusal"] {
+	if (!error || typeof error !== "object") return undefined;
+	const record = error as { code?: unknown; type?: unknown; error?: unknown };
+	for (const code of [record.code, record.type]) {
+		if (typeof code === "string" && OPENAI_REFUSAL_CODES.has(code)) return { source: "error_code", raw: code };
+	}
+	if (record.error && typeof record.error === "object") {
+		const nested = record.error as { code?: unknown; type?: unknown };
+		for (const code of [nested.code, nested.type]) {
+			if (typeof code === "string" && OPENAI_REFUSAL_CODES.has(code)) return { source: "error_code", raw: code };
+		}
+	}
+	return undefined;
+}
+
+/** Azure Responses extends the SDK response with content_filters annotations. */
+function getResponsesContentFilter(response: unknown): AssistantMessage["refusal"] {
+	const filters = (response as { content_filters?: unknown } | undefined)?.content_filters;
+	if (!Array.isArray(filters)) return undefined;
+	const blocked = filters.filter(
+		(filter: unknown) =>
+			filter !== null && typeof filter === "object" && "blocked" in filter && filter.blocked === true,
+	);
+	return blocked.length > 0 ? { source: "content_filter", raw: JSON.stringify(blocked) } : undefined;
+}
+
 /**
  * Flat USD cost per native web-search query, keyed by provider. Providers bill
  * the server-side `web_search` tool per search, on top of tokens:
@@ -789,6 +827,13 @@ export async function processResponsesStream<TApi extends Api>(
 		const incompleteDetails = response?.incomplete_details as { reason?: unknown } | null | undefined;
 		const incompleteReason = typeof incompleteDetails?.reason === "string" ? incompleteDetails.reason : undefined;
 		output.rawStopReason = incompleteReason ? `${status}.${incompleteReason}` : status;
+		output.refusal ??= getOpenAIErrorRefusal(response.error) ?? getResponsesContentFilter(response);
+		if (incompleteReason === "content_filter") output.refusal ??= { source: "stop_reason", raw: incompleteReason };
+		for (const item of response.output ?? []) {
+			if (item.type !== "message") continue;
+			const refusal = item.content.find((part) => part.type === "refusal");
+			if (refusal) output.refusal ??= { source: "content_filter", raw: refusal.refusal };
+		}
 		const mappedStop = mapStopReason(status, incompleteReason);
 		output.stopReason = mappedStop.stopReason;
 		if (mappedStop.errorMessage === undefined) delete output.errorMessage;
@@ -848,6 +893,8 @@ export async function processResponsesStream<TApi extends Api>(
 				partial: output,
 			});
 		} else if (event.type === "response.refusal.delta") {
+			output.refusal ??= { source: "content_filter", raw: "" };
+			if (output.refusal.source === "content_filter") output.refusal.raw += event.delta;
 			const slot = getSlot(event.output_index, "text");
 			if (!slot) continue;
 			slot.block.text += event.delta;
@@ -857,6 +904,8 @@ export async function processResponsesStream<TApi extends Api>(
 				delta: event.delta,
 				partial: output,
 			});
+		} else if (event.type === "response.refusal.done") {
+			output.refusal = { source: "content_filter", raw: event.refusal };
 		} else if (event.type === "response.function_call_arguments.delta") {
 			const slot = getSlot(event.output_index, "toolCall");
 			if (!slot || slot.block.partialJson === undefined) continue;
@@ -907,6 +956,8 @@ export async function processResponsesStream<TApi extends Api>(
 				});
 				outputSlots.delete(event.output_index);
 			} else if (item.type === "message" && slot?.type === "text") {
+				const refusal = item.content?.find((part) => part.type === "refusal");
+				if (refusal) output.refusal = { source: "content_filter", raw: refusal.refusal };
 				slot.block.text = item.content?.map((c) => (c.type === "output_text" ? c.text : c.refusal)).join("") || "";
 				slot.block.textSignature = encodeTextSignatureV1(item.id, item.phase ?? undefined);
 				stream.push({
@@ -951,11 +1002,13 @@ export async function processResponsesStream<TApi extends Api>(
 		} else if (event.type === "response.completed" || event.type === "response.incomplete") {
 			finalizeResponse(event.response);
 		} else if (event.type === "error") {
+			output.refusal ??= getOpenAIErrorRefusal(event);
 			throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error");
 		} else if (event.type === "response.failed") {
 			sawTerminalResponseEvent = true;
 			output.rawStopReason = event.response?.status;
 			const error = event.response?.error;
+			output.refusal ??= getOpenAIErrorRefusal(error) ?? getResponsesContentFilter(event.response);
 			const details = event.response?.incomplete_details;
 			const msg = error
 				? `${error.code || "unknown"}: ${error.message || "no message"}`
@@ -1009,9 +1062,7 @@ function mapStopReason(
 		case "in_progress":
 		case "queued":
 			return { stopReason: "stop" };
-		default: {
-			const _exhaustive: never = status;
-			throw new Error(`Unhandled stop reason: ${_exhaustive}`);
-		}
+		default:
+			return { stopReason: "error", errorMessage: `Provider stopped with: ${status}` };
 	}
 }

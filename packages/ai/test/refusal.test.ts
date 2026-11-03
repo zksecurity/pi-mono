@@ -91,9 +91,102 @@ describe("isAccountRestriction", () => {
 
 describe("classifyRefusal", () => {
 	it("separates the two cybersecurity-worded failures", () => {
-		expect(classifyRefusal(createMessage(CODEX_CYBER_BLOCK))).toBe("refusal");
-		expect(classifyRefusal(createMessage(OPENAI_ACCOUNT_LIMIT))).toBe("accountRestriction");
+		expect(classifyRefusal(createMessage(CODEX_CYBER_BLOCK))).toEqual({ kind: "refusal", source: "pattern" });
+		expect(classifyRefusal(createMessage(OPENAI_ACCOUNT_LIMIT))).toEqual({
+			kind: "accountRestriction",
+			source: "pattern",
+		});
 		expect(classifyRefusal(createMessage("fetch failed"))).toBeUndefined();
+	});
+});
+
+describe("structured refusals", () => {
+	it.each(["stop_reason", "error_code", "content_filter"] as const)("prefers %s over error wording", (source) => {
+		const message = createMessage(CODEX_CYBER_BLOCK);
+		message.refusal = { source, raw: "native signal" };
+		expect(classifyRefusal(message)).toEqual({ kind: "refusal", source });
+		message.errorMessage = undefined;
+		expect(isRefusal(message)).toBe(true);
+		message.errorMessage = "503 overloaded";
+		expect(isRetryableAssistantError(message)).toBe(false);
+		message.errorMessage = OPENAI_ACCOUNT_LIMIT;
+		expect(classifyRefusal(message)).toEqual({ kind: "accountRestriction", source: "pattern" });
+		expect(isAccountRestriction(message)).toBe(true);
+		expect(isRefusal(message)).toBe(false);
+	});
+});
+
+describe("text declines", () => {
+	// Representative short openings used by Llama, Qwen, DeepSeek, and GPT-OSS
+	// style chat models. These are wording fixtures, not live provider calls.
+	it.each([
+		"I cannot assist with that request.",
+		"I'm sorry, but I can't help with that.",
+		"Sorry, I cannot fulfill this request.",
+		"I can’t comply with that request.",
+		"I won't support that.",
+		"I will not help with that.",
+		"I am unable to assist with that request.",
+		"I’m unable to help with that.",
+		"I am not able to fulfil that request.",
+		"I'm not able to help with that.",
+		"I must decline to assist with that request.",
+		"I cannot do this.",
+		"I can't do that!",
+		"I cannot do it",
+		"  > ### **_I cannot assist with that request._**  ",
+		"i cannot help with that.",
+	])("detects %s without changing the message", (text) => {
+		const message = createMessage(undefined, "stop");
+		message.content = [{ type: "text", text }];
+		const before = structuredClone(message);
+		expect(classifyRefusal(message)).toEqual({ kind: "refusal", source: "text" });
+		expect(isRefusal(message)).toBe(true);
+		expect(isAccountRestriction(message)).toBe(false);
+		expect(message).toEqual(before);
+	});
+
+	it.each([
+		"I can't reproduce the bug",
+		"I cannot run the harness here, so I read the code instead",
+		"I cannot inspect that file without access.",
+		"I can't do this automatically, but here are the commands.",
+		"I cannot do that calculation in my head.",
+		"The model said: I cannot help with that.",
+		"I cannot helpfully summarize this in one sentence.",
+		"Here is a complete answer.",
+		"",
+	])("does not classify %s", (text) => {
+		const message = createMessage(undefined, "stop");
+		message.content = [{ type: "text", text }];
+		expect(classifyRefusal(message)).toBeUndefined();
+	});
+
+	it("joins text blocks, ignores thinking, and enforces the exact length cap", () => {
+		const message = createMessage(undefined, "stop");
+		message.content = [
+			{ type: "thinking", thinking: "Reasoning" },
+			{ type: "text", text: "I cannot" },
+			{ type: "text", text: "help.".padEnd(991, "x") },
+		];
+		expect(classifyRefusal(message)).toEqual({ kind: "refusal", source: "text" });
+		message.content.push({ type: "text", text: "x" });
+		expect(classifyRefusal(message)).toBeUndefined();
+	});
+
+	it("excludes messages containing tool calls", () => {
+		const message = createMessage(undefined, "stop");
+		message.content = [
+			{ type: "text", text: "I cannot help with that." },
+			{ type: "toolCall", id: "call-1", name: "bash", arguments: {} },
+		];
+		expect(classifyRefusal(message)).toBeUndefined();
+	});
+
+	it.each(["pending", "length", "toolUse", "error", "aborted", "deferred"] as const)("excludes %s stops", (reason) => {
+		const message = createMessage(undefined, reason);
+		message.content = [{ type: "text", text: "I cannot help with that." }];
+		expect(classifyRefusal(message)).toBeUndefined();
 	});
 });
 

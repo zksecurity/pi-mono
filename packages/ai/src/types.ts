@@ -709,6 +709,8 @@ export interface AssistantMessage {
 	deferred?: DeferredHandle;
 	errorMessage?: string;
 	rawStopReason?: string;
+	/** Native refusal signal. `raw` is the provider code, refusal text, or JSON for a structured payload. */
+	refusal?: { source: "stop_reason" | "error_code" | "content_filter"; raw: string };
 	/**
 	 * Provider indication of whether the model explicitly ended its turn.
 	 * Preserved for debugging and does not currently affect agent control flow.

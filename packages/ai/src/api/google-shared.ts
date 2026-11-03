@@ -15,6 +15,7 @@ import {
 } from "@google/genai";
 import { clampThinkingLevel } from "../models.ts";
 import type {
+	AssistantMessage,
 	ImageContent,
 	Model,
 	NativeWebSearchOptions,
@@ -608,11 +609,28 @@ export function mapStopReason(reason: FinishReason): StopReason {
 		case FinishReason.TOO_MANY_TOOL_CALLS:
 		case FinishReason.NO_IMAGE:
 			return "error";
-		default: {
-			const _exhaustive: never = reason;
-			throw new Error(`Unhandled stop reason: ${_exhaustive}`);
-		}
+		default:
+			return "error";
 	}
+}
+
+/** Only explicit safety blocks count; malformed calls and unspecified failures do not. */
+export function getGoogleRefusal(
+	reason: string,
+	source: "stop_reason" | "content_filter",
+): AssistantMessage["refusal"] {
+	return [
+		"SAFETY",
+		"PROHIBITED_CONTENT",
+		"BLOCKLIST",
+		"SPII",
+		"IMAGE_SAFETY",
+		"IMAGE_PROHIBITED_CONTENT",
+		"MODEL_ARMOR",
+		"JAILBREAK",
+	].includes(reason)
+		? { source, raw: reason }
+		: undefined;
 }
 
 /**
