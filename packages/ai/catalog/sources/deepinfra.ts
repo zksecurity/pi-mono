@@ -1,4 +1,5 @@
 import type { Model } from "../../src/types.ts";
+import { roundCost } from "./models-dev.ts";
 
 const DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai";
 
@@ -37,9 +38,9 @@ export async function fetchDeepInfraModels(): Promise<Model<"openai-completions"
 			input: tags.includes("vision") ? ["text", "image"] : ["text"],
 			cost: {
 				// DeepInfra reports prices per million tokens.
-				input: Math.round((meta.pricing?.input_tokens ?? 0) * 1000000) / 1000000,
-				output: Math.round((meta.pricing?.output_tokens ?? 0) * 1000000) / 1000000,
-				cacheRead: Math.round((meta.pricing?.cache_read_tokens ?? 0) * 1000000) / 1000000,
+				input: roundCost(meta.pricing?.input_tokens ?? 0),
+				output: roundCost(meta.pricing?.output_tokens ?? 0),
+				cacheRead: roundCost(meta.pricing?.cache_read_tokens ?? 0),
 				cacheWrite: 0,
 			},
 			contextWindow,
