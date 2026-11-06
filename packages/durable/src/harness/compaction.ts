@@ -163,31 +163,49 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 			if (cutOffTooOften(task, runtime)) return failCutOff(runtime, task, context);
 			const { phase: _, ...request } = task.state.checkpoint;
 			const { model: ref, thinkingLevel, streamOptions, maxTokens, tail, firstKept, attempt } = request;
-			const model = runtime.models.getModel(ref.provider, ref.modelId);
-			if (model === undefined) return failNoModel(runtime, ref, context);
-			// The context at `tail` is immutable, so this is the range `select` chose.
-			const view = await runtime.context(runtime.conversationId, context, { at: tail });
-			const cut = view.entries.findIndex((entry) => entry.id === firstKept);
-			const now = runtime.now();
-			const messages: Message[] = [
-				{ role: "system", content: SUMMARIZATION_SYSTEM_PROMPT, timestamp: now },
-				{
-					role: "user",
-					content: [{ type: "text", text: summaryPrompt(summarizedMessages(view, cut), task.input.instructions) }],
-					timestamp: now,
-				},
-			];
-			const { deferred: _deferred, ...forwarded } = streamOptions;
-			const options: SimpleStreamOptions = {
-				...forwarded,
-				cacheRetention: "none",
-				maxTokens,
-				signal: runtime.signal,
-				telemetry: context.telemetry,
-				sessionId: await ensureProviderSessionId(runtime, context),
-				...(thinkingLevel === "off" ? {} : { reasoning: thinkingLevel }),
+			const identity = {
+				conversationId: runtime.conversationId,
+				taskId: runtime.taskId,
+				purpose: "compaction" as const,
+				attempt,
+				cutoff: tail,
+				restarts: task.restarts ?? 0,
 			};
-			const message = await runtime.models.completeSimple(model, { messages }, options);
+			let message = await runtime.modelRequests?.recover(identity, context);
+			if (message === undefined) {
+				const model = runtime.models.getModel(ref.provider, ref.modelId);
+				if (model === undefined) return failNoModel(runtime, ref, context);
+				// The context at `tail` is immutable, so this is the range `select` chose.
+				const view = await runtime.context(runtime.conversationId, context, { at: tail });
+				const cut = view.entries.findIndex((entry) => entry.id === firstKept);
+				const now = runtime.now();
+				const messages: Message[] = [
+					{ role: "system", content: SUMMARIZATION_SYSTEM_PROMPT, timestamp: now },
+					{
+						role: "user",
+						content: [
+							{ type: "text", text: summaryPrompt(summarizedMessages(view, cut), task.input.instructions) },
+						],
+						timestamp: now,
+					},
+				];
+				const { deferred: _deferred, ...forwarded } = streamOptions;
+				const options: SimpleStreamOptions = {
+					...forwarded,
+					cacheRetention: "none",
+					maxTokens,
+					signal: runtime.signal,
+					telemetry: context.telemetry,
+					sessionId: await ensureProviderSessionId(runtime, context),
+					...(thinkingLevel === "off" ? {} : { reasoning: thinkingLevel }),
+				};
+
+				const run = () => runtime.models.completeSimple(model, { messages }, options);
+				message =
+					runtime.modelRequests === undefined
+						? await run()
+						: await runtime.modelRequests.execute({ ...identity, model, messages, options }, run, context);
+			}
 			// An abort mark or close: the abort invocation or the reopened task handles the committed state.
 			runtime.signal.throwIfAborted();
 			const summary = summaryText(message);
