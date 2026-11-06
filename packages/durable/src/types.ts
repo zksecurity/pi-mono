@@ -7,6 +7,7 @@ import type {
 	Agent,
 	ContextView,
 	ConversationHandle,
+	ModelRequestLifecycle,
 	RegistrySnapshot,
 	Settings,
 	SettledTask,
@@ -274,6 +275,7 @@ export interface TaskRuntime<I, S, R, H extends object> extends DocumentObserver
 	readonly settings: Settings;
 	/** `HarnessOptions.models`, resolved at each access. */
 	readonly models: Models;
+	readonly modelRequests?: ModelRequestLifecycle;
 	/** Calls `HarnessOptions.env` for the task's conversation; rejects with its error. */
 	env(context: Context): Promise<ExecutionEnv | undefined>;
 	/** Handlers of this task's name from the extensions its conversation selects, in extension order. */

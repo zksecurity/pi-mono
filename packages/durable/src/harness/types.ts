@@ -8,6 +8,7 @@ import type {
 	Model,
 	Models,
 	ModelThinkingLevel,
+	SimpleStreamOptions,
 	Tool,
 	ToolCall,
 	ToolResultMessage,
@@ -681,7 +682,32 @@ export type EnvTarget = {
 	readonly read: DocumentReader;
 };
 
+/** Stable identity of one model operation within a durable task. */
+export type ModelRequestIdentity = {
+	readonly conversationId: ConversationId;
+	readonly taskId: TaskId;
+	readonly purpose: "generation" | "compaction" | "generation-poll";
+	readonly attempt: number;
+	readonly cutoff: EntryId;
+	readonly restarts: number;
+	readonly pollAt?: number;
+};
+
+/** Prepared provider operation offered to the host before dispatch. */
+export type ModelRequest = ModelRequestIdentity & {
+	readonly model: Model<Api>;
+	readonly messages: readonly Message[];
+	readonly options: SimpleStreamOptions;
+};
+
+/** Host persistence and accounting around model execution; failures propagate. */
+export interface ModelRequestLifecycle {
+	recover(identity: ModelRequestIdentity, context: Context): Promise<AssistantMessage | undefined>;
+	execute(request: ModelRequest, run: () => Promise<AssistantMessage>, context: Context): Promise<AssistantMessage>;
+}
+
 export type HarnessOptions<Tool extends ToolRegistration = ToolRegistration> = {
+	readonly modelRequests?: ModelRequestLifecycle;
 	/** Host-owned adapter for content-free admission/phase telemetry; propagation and metrics are optional. */
 	readonly telemetry?: TelemetryContext;
 	/**

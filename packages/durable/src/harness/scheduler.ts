@@ -215,6 +215,7 @@ export type TaskSchedulerOptions = {
 	readonly registry: RegistryReader;
 	/** The host's current model access (`HarnessOptions.models`); read at each access. */
 	readonly models: () => Models;
+	readonly modelRequests?: HarnessOptions["modelRequests"];
 	/** Resolve a conversation's agent against a snapshot; the runtime calls it at most once per phase. */
 	readonly agent: (conversationId: ConversationId, snapshot: RegistrySnapshot, context: Context) => Promise<Agent>;
 	/** Resolve the settings; read at each access. */
@@ -291,6 +292,7 @@ export class TaskScheduler {
 	readonly #storage: Storage;
 	readonly #registry: RegistryReader;
 	readonly #models: () => Models;
+	readonly #modelRequests: HarnessOptions["modelRequests"];
 	readonly #agent: TaskSchedulerOptions["agent"];
 	readonly #settings: TaskSchedulerOptions["settings"];
 	readonly #env: TaskSchedulerOptions["env"];
@@ -409,6 +411,7 @@ export class TaskScheduler {
 		this.#storage = options.storage;
 		this.#registry = options.registry;
 		this.#models = options.models;
+		this.#modelRequests = options.modelRequests;
 		this.#agent = options.agent;
 		this.#settings = options.settings;
 		this.#env = options.env;
@@ -2647,6 +2650,7 @@ export class TaskScheduler {
 		return {
 			taskId: invocation.taskId as TaskId<JsonValue>,
 			conversationId: invocation.conversationId,
+			modelRequests: this.#modelRequests,
 			signal: invocation.controller.signal,
 			get models() {
 				return models();
