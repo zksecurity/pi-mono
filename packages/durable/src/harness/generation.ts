@@ -269,10 +269,22 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 		request: async (task, runtime, context) => {
 			// Charging the attempt may itself be what keeps failing, such as converting a huge partial: the limit ends it.
 			if (cutOffTooOften(task, runtime)) return endCutOff(runtime, task, context);
-			// The host stopped while this request was in flight: a failed attempt, not a resend (spec §8.3).
-			if (task.restarts !== undefined) return interrupted(runtime, task.state.checkpoint, context);
 			const { attempt, compacted, model: ref, thinkingLevel, streamOptions, cutoff } = task.state.checkpoint;
 			const conversationId = runtime.conversationId;
+			const identity = {
+				conversationId,
+				taskId: runtime.taskId,
+				purpose: "generation" as const,
+				attempt,
+				cutoff,
+				restarts: task.restarts ?? 0,
+			};
+			const saved = await runtime.modelRequests?.recover(identity, context);
+			if (saved !== undefined) {
+				await classify(runtime, { attempt, compacted, model: ref, thinkingLevel, cutoff }, saved, context);
+				return;
+			}
+			if (task.restarts !== undefined) return interrupted(runtime, task.state.checkpoint, context);
 			// The attempt shown is presentation, stored like progress (`PROGRESS_COMMIT`); converting a partial left by an
 			// interrupted attempt appends an entry, which makes the commit immediate.
 			await runtime.commit(
@@ -301,7 +313,11 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 				...(thinkingLevel === "off" ? {} : { reasoning: thinkingLevel }),
 				onPayload: (payload) => providerPayload(runtime, model, payload, context),
 			};
-			const message = await streamResponse(runtime, model, messages, options, attempt, context);
+			const run = () => streamResponse(runtime, model, messages, options, attempt, context);
+			const message =
+				runtime.modelRequests === undefined
+					? await run()
+					: await runtime.modelRequests.execute({ ...identity, model, messages, options }, run, context);
 			const request = { attempt, compacted, model: ref, thinkingLevel, cutoff, messages: view.messages };
 			await classify(runtime, request, message, context);
 		},
@@ -332,14 +348,34 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			if (cutOffTooOften(task, runtime)) return endCutOff(runtime, task, context);
 			// The host stopped while the poll's fetch was in flight: a failed attempt, as for a request. Checked before the
 			// time, which may have moved backwards on a replacement host; a sleeping poll is never cut off.
+			const identity = {
+				conversationId: runtime.conversationId,
+				taskId: runtime.taskId,
+				purpose: "generation-poll" as const,
+				pollAt,
+				attempt,
+				cutoff,
+				restarts: task.restarts ?? 0,
+			};
+			const saved = await runtime.modelRequests?.recover(identity, context);
+			if (saved !== undefined) {
+				await classify(runtime, { attempt, compacted, model: ref, thinkingLevel, cutoff, pollAt }, saved, context);
+				return;
+			}
 			if (task.restarts !== undefined) return interrupted(runtime, task.state.checkpoint, context);
 			if (pollAt > runtime.now()) return runtime.sleepUntil(pollAt, task.state.checkpoint, context);
 			const model = runtime.models.getModel(ref.provider, ref.modelId);
 			if (model === undefined) return failNoModel(runtime, ref, context);
-			const message = await runtime.models.fetchDeferred(model, handle, {
+			const options: SimpleStreamOptions = {
 				signal: runtime.signal,
 				telemetry: context.telemetry,
-			});
+			};
+			const run = () => runtime.models.fetchDeferred(model, handle, options);
+			const messages = (await runtime.context(runtime.conversationId, context, { at: cutoff })).messages;
+			const message =
+				runtime.modelRequests === undefined
+					? await run()
+					: await runtime.modelRequests.execute({ ...identity, model, messages, options }, run, context);
 			const request = { attempt, compacted, model: ref, thinkingLevel, cutoff, pollAt };
 			await classify(runtime, request, message, context);
 		},
