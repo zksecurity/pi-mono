@@ -128,6 +128,12 @@ function applyChange(state: Draft<AgentState>, change: AgentChange): void {
 		else state[key] = value as Draft<AgentState>[K];
 	};
 	set("model", change.model === undefined || change.model === null ? change.model : { ...change.model });
+	set(
+		"fallbackModels",
+		change.fallbackModels === undefined || change.fallbackModels === null
+			? change.fallbackModels
+			: change.fallbackModels.map((model) => ({ ...model })),
+	);
 	set("thinkingLevel", change.thinkingLevel);
 	const extensions = change.extensions;
 	set(
@@ -306,6 +312,7 @@ export function resolveAgent<Tool extends ToolRegistration>(
 
 	const agent: Agent<Tool> = {
 		...(state?.model === undefined ? {} : { model: state.model }),
+		...(state?.fallbackModels === undefined ? {} : { fallbackModels: state.fallbackModels }),
 		thinkingLevel: state?.thinkingLevel ?? "off",
 		extensions,
 		tools,
