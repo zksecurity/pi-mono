@@ -16,6 +16,7 @@ import type {
 	Tx,
 } from "../types.ts";
 import { orderToolResults } from "./context.ts";
+import { fallbackAttempt, fallbackRefusal, type ModelFallback, nextFallback, prepareFallback } from "./fallback.ts";
 import {
 	addCompactionStatus,
 	compactionStatus,
@@ -39,12 +40,13 @@ import type {
 	ModelRef,
 	Settings,
 } from "./types.ts";
-import { recordUsage } from "./usage.ts";
+import { recordModelUsage } from "./usage.ts";
 
 export type CompactionInput = { reason: CompactionReason; instructions?: string };
 
 /** The pinned summarization request. */
 export type SummaryRequest = {
+	fallback?: ModelFallback;
 	attempt: number;
 	model: ModelRef;
 	thinkingLevel: ModelThinkingLevel;
@@ -57,7 +59,7 @@ export type SummaryRequest = {
 };
 
 export type CompactionCheckpoint =
-	| { phase: "select" }
+	| { phase: "select"; fallback?: ModelFallback; attempt?: number }
 	| ({ phase: "summarize" } & SummaryRequest)
 	| ({ phase: "retry"; until: number } & SummaryRequest);
 
@@ -115,7 +117,12 @@ Keep each section concise. Preserve exact file paths, function names, and error 
  */
 export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, CompactionResult, CompactionHooks>({
 	name: "pi.compaction",
-	version: 1,
+	version: 2,
+	// Older schedulers cannot preserve the pinned fallback model.
+	migrate: (input, checkpoint) => ({
+		input: input as CompactionInput,
+		checkpoint: checkpoint as CompactionCheckpoint,
+	}),
 	initial: () => ({ phase: "select" }),
 	phases: {
 		select: async (task, runtime, context) => {
@@ -123,7 +130,10 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 			const { conversationId } = runtime;
 			const agent = await runtime.agent(context);
 			const settings = runtime.settings;
-			const ref = agent.model;
+			const fallback =
+				task.state.checkpoint.fallback ??
+				(agent.model === undefined ? undefined : prepareFallback(agent.model, agent.fallbackModels));
+			const ref = fallback === undefined ? agent.model : fallback.models[fallback.index];
 			const model = ref === undefined ? undefined : runtime.models.getModel(ref.provider, ref.modelId);
 			if (ref === undefined || model === undefined) return failNoModel(runtime, ref, context);
 			const policy = compactionPolicy(settings, ref, agent.compaction);
@@ -146,7 +156,8 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 			if (decision !== undefined && "decline" in decision) return complete(runtime, context);
 			if (decision !== undefined) return place(runtime, firstKept, decision.summary, context);
 			const request: SummaryRequest = {
-				attempt: 1,
+				...(fallback === undefined ? {} : { fallback }),
+				attempt: task.state.checkpoint.attempt ?? 1,
 				model: ref,
 				thinkingLevel: agent.thinkingLevel,
 				streamOptions: settings.stream,
@@ -189,7 +200,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 						timestamp: now,
 					},
 				];
-				const { deferred: _deferred, ...forwarded } = streamOptions;
+				const { deferred: _deferred, nativeTools: _nativeTools, ...forwarded } = streamOptions;
 				const options: SimpleStreamOptions = {
 					...forwarded,
 					cacheRetention: "none",
@@ -208,23 +219,29 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 			}
 			// An abort mark or close: the abort invocation or the reopened task handles the committed state.
 			runtime.signal.throwIfAborted();
-			const summary = summaryText(message);
+			const fallback = request.fallback;
+			const refused = fallbackRefusal(message, fallback);
+			const next = refused ? nextFallback(fallback, attempt) : undefined;
+			const summary = refused ? undefined : summaryText(message);
 			const policy = runtime.settings.retry;
+			const localAttempt = fallbackAttempt(fallback, attempt);
 			const retry =
 				message.stopReason === "error" &&
 				isRetryableAssistantError(message) &&
 				policy.enabled &&
-				attempt <= policy.maxRetries;
-			const until = retry ? runtime.now() + retryDelayMs(policy, attempt) : 0;
+				localAttempt <= policy.maxRetries;
+			const until = retry ? runtime.now() + retryDelayMs(policy, localAttempt) : 0;
 			await runtime.commit(async (tx, current): Promise<Next> => {
-				await recordUsage(
-					tx,
-					runtime.conversationId,
-					"models",
-					`${message.provider}/${message.model}`,
-					message.usage,
-				);
+				await recordModelUsage(tx, runtime.conversationId, message);
 				const live = await tx.doc(LiveDoc, runtime.conversationId);
+				if (next !== undefined) {
+					const status = compactionStatus(live, runtime.taskId);
+					if (status !== undefined) {
+						status.attempt = attempt + 1;
+						delete status.retry;
+					}
+					return { status: "running", checkpoint: { phase: "select", fallback: next, attempt: attempt + 1 } };
+				}
 				if (summary !== undefined) return placeSummary(tx, runtime, current, live, firstKept, summary);
 				if (retry) {
 					const status = compactionStatus(live, runtime.taskId);
@@ -232,7 +249,9 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 					const checkpoint = { phase: "retry", ...request, until } as const;
 					return { status: "sleeping", checkpoint, until };
 				}
-				const text = summaryFailure(message);
+				const text = refused
+					? `Summarization refused: ${message.errorMessage ?? "The model declined the request"}`
+					: summaryFailure(message);
 				failCompactionStatus(live, runtime.taskId, text);
 				return {
 					status: "terminal",
