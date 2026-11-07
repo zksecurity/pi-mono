@@ -11,6 +11,7 @@ import type {
 	SimpleStreamOptions,
 	ToolCall,
 } from "@earendil-works/pi-ai";
+import { assertNoNativeToolNameCollision } from "@earendil-works/pi-ai/utils/native-tools";
 import { isContextOverflow } from "@earendil-works/pi-ai/utils/overflow";
 import { isRetryableAssistantError, retryDelayMs } from "@earendil-works/pi-ai/utils/retry";
 import { getCurrentTools } from "@earendil-works/pi-ai/utils/transcript";
@@ -32,6 +33,14 @@ import type {
 } from "../types.ts";
 import { addTools, agentHooks, sectionExtension } from "./agent.ts";
 import { compactionPolicy, createCompaction, estimateContext, selectCut } from "./compaction.ts";
+import {
+	fallbackAttempt,
+	fallbackRefusal,
+	type ModelFallback,
+	nextFallback,
+	omitRefusal,
+	prepareFallback,
+} from "./fallback.ts";
 import { applyBoundary, type Boundary, hasQueuedReset, prepareBoundary, withdrawQueuedInputs } from "./inbox.ts";
 import {
 	cutOffCount,
@@ -64,12 +73,12 @@ import type {
 	ToolControl,
 	UserInput,
 } from "./types.ts";
-import { recordUsage } from "./usage.ts";
+import { recordModelUsage } from "./usage.ts";
 import { optionalExtension } from "./util.ts";
 
 export type GenerationInput = Record<string, never>;
 
-export type GenerationCheckpoint =
+export type GenerationCheckpoint = { fallback?: ModelFallback } & (
 	| {
 			phase: "prepare";
 			attempt: number;
@@ -155,7 +164,8 @@ export type GenerationCheckpoint =
 			phase: "yield";
 			answer: EntryId;
 			tasks: TaskId[];
-	  };
+	  }
+);
 
 export type GenerationResult = { entryId: EntryId };
 
@@ -164,6 +174,7 @@ type Next = NextTaskState<GenerationCheckpoint, GenerationResult>;
 
 /** What classification needs from the request that produced a message. */
 type Request = {
+	readonly fallback?: ModelFallback;
 	readonly attempt: number;
 	readonly compacted: TaskId<CompactionResult> | undefined;
 	readonly model: ModelRef;
@@ -183,11 +194,12 @@ const DEFAULT_POLL_AFTER_MS = 5000;
  */
 export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, GenerationResult, GenerationHooks>({
 	name: "pi.generation",
-	version: 3,
+	version: 4,
 	initial: () => ({ phase: "prepare", attempt: 1 }),
 	// Version 2 leaves calls to tools not offered in a sequential round's `pending`, flagged `unoffered` in their slots.
 	// A version 1 Harness would start their tool tasks unflagged, resolving the name, so it leaves version 2 blocked
-	// instead. Version 3 adds the `afterTools` and `yield` phases. Older checkpoints are kept as they are.
+	// instead. Version 3 adds the `afterTools` and `yield` phases. Version 4 pins model fallback across retries: an older
+	// Harness must not restart a declined primary model. Older checkpoints are kept as they are.
 	migrate: (input, checkpoint) => ({
 		input: input as GenerationInput,
 		checkpoint: checkpoint as GenerationCheckpoint,
@@ -204,10 +216,19 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			const { conversationId } = runtime;
 			const agent = await runtime.agent(context);
 			const settings = runtime.settings;
-			const { model, thinkingLevel } = agent;
+			const fallback =
+				task.state.checkpoint.fallback ??
+				(agent.model === undefined ? undefined : prepareFallback(agent.model, agent.fallbackModels));
+			const model = fallback === undefined ? agent.model : fallback.models[fallback.index];
+			const { thinkingLevel } = agent;
 			const resolved = model === undefined ? undefined : runtime.models.getModel(model.provider, model.modelId);
 			if (model === undefined || resolved === undefined) return failNoModel(runtime, model, context);
 			const { attempt, compacted, overflow, threshold: blocked } = task.state.checkpoint;
+			const keptFallback = fallback === undefined ? {} : { fallback };
+			assertNoNativeToolNameCollision(
+				agent.tools.map((tool) => tool.name),
+				settings.stream.nativeTools,
+			);
 			if (compacted !== undefined && overflow !== undefined) {
 				const [outcome] = await runtime.outcomes([compacted], context);
 				if (outcome?.status !== "completed" || outcome.result.entryId === undefined) {
@@ -262,7 +283,13 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 				// Compact first and prepare again; the transcript is unchanged until the compaction appends.
 				await runtime.commit(async (tx): Promise<Next> => {
 					const child = await createCompaction(tx, conversationId, { reason: "threshold" }, runtime.taskId);
-					const checkpoint = { phase: "prepare", attempt, compacted: child, threshold: true } as const;
+					const checkpoint = {
+						phase: "prepare",
+						attempt,
+						compacted: child,
+						threshold: true,
+						...keptFallback,
+					} as const;
 					return { status: "waiting", checkpoint, on: [child], policy: "allSettled" };
 				}, context);
 				return;
@@ -276,6 +303,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 					await createCompaction(tx, conversationId, { reason: "threshold" });
 				}
 				const request = {
+					...keptFallback,
 					attempt,
 					...(compacted === undefined ? {} : { compacted }),
 					model,
@@ -291,6 +319,14 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			if (cutOffTooOften(task, runtime)) return endCutOff(runtime, task, context);
 			const { attempt, compacted, model: ref, thinkingLevel, streamOptions, cutoff } = task.state.checkpoint;
 			const conversationId = runtime.conversationId;
+			const request: Request = {
+				attempt,
+				compacted,
+				model: ref,
+				thinkingLevel,
+				cutoff,
+				...(task.state.checkpoint.fallback === undefined ? {} : { fallback: task.state.checkpoint.fallback }),
+			};
 			const identity = {
 				conversationId,
 				taskId: runtime.taskId,
@@ -301,7 +337,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			};
 			const saved = await runtime.modelRequests?.recover(identity, context);
 			if (saved !== undefined) {
-				await classify(runtime, { attempt, compacted, model: ref, thinkingLevel, cutoff }, saved, context);
+				await classify(runtime, request, saved, context);
 				return;
 			}
 			if (task.restarts !== undefined) return interrupted(runtime, task.state.checkpoint, context);
@@ -325,6 +361,10 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 				const replaced = await hook({ messages }, runtime, context);
 				if (replaced !== undefined) messages = replaced.messages;
 			});
+			assertNoNativeToolNameCollision(
+				getCurrentTools(messages).map((tool) => tool.name),
+				streamOptions.nativeTools,
+			);
 			const options: SimpleStreamOptions = {
 				...streamOptions,
 				signal: runtime.signal,
@@ -338,8 +378,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 				runtime.modelRequests === undefined
 					? await run()
 					: await runtime.modelRequests.execute({ ...identity, model, messages, options }, run, context);
-			const request = { attempt, compacted, model: ref, thinkingLevel, cutoff, messages: view.messages };
-			await classify(runtime, request, message, context);
+			await classify(runtime, { ...request, messages: view.messages }, message, context);
 		},
 		/** After the backoff's sleep; a run before `until` (an early wake, or a record of an earlier version) sleeps again. */
 		retry: async (task, runtime, context) => {
@@ -348,7 +387,10 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			if (until > runtime.now()) return runtime.sleepUntil(until, task.state.checkpoint, context);
 			await runtime.commit(async (tx) => {
 				const live = await tx.doc(LiveDoc, runtime.conversationId);
-				const kept = compacted === undefined ? {} : { compacted };
+				const kept = {
+					...(compacted === undefined ? {} : { compacted }),
+					...(task.state.checkpoint.fallback === undefined ? {} : { fallback: task.state.checkpoint.fallback }),
+				};
 				// A poll the host died during polls its response again, as the next attempt.
 				if (poll !== undefined) {
 					const pollAt = runtime.now();
@@ -365,6 +407,15 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 		/** After the sleep until `pollAt`; a run before it (an early wake, or a record of an earlier version) sleeps again. */
 		poll: async (task, runtime, context) => {
 			const { attempt, compacted, model: ref, thinkingLevel, cutoff, handle, pollAt } = task.state.checkpoint;
+			const request: Request = {
+				attempt,
+				compacted,
+				model: ref,
+				thinkingLevel,
+				cutoff,
+				pollAt,
+				...(task.state.checkpoint.fallback === undefined ? {} : { fallback: task.state.checkpoint.fallback }),
+			};
 			if (cutOffTooOften(task, runtime)) return endCutOff(runtime, task, context);
 			// The host stopped while the poll's fetch was in flight: a failed attempt, as for a request. Checked before the
 			// time, which may have moved backwards on a replacement host; a sleeping poll is never cut off.
@@ -379,7 +430,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			};
 			const saved = await runtime.modelRequests?.recover(identity, context);
 			if (saved !== undefined) {
-				await classify(runtime, { attempt, compacted, model: ref, thinkingLevel, cutoff, pollAt }, saved, context);
+				await classify(runtime, request, saved, context);
 				return;
 			}
 			if (task.restarts !== undefined) return interrupted(runtime, task.state.checkpoint, context);
@@ -396,7 +447,6 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 				runtime.modelRequests === undefined
 					? await run()
 					: await runtime.modelRequests.execute({ ...identity, model, messages, options }, run, context);
-			const request = { attempt, compacted, model: ref, thinkingLevel, cutoff, pollAt };
 			await classify(runtime, request, message, context);
 		},
 		tools: async (task, runtime, context) => {
@@ -612,8 +662,9 @@ async function interrupted(
 ): Promise<void> {
 	const { attempt, compacted } = checkpoint;
 	const policy = runtime.settings.retry;
-	const retry = policy.enabled && attempt <= policy.maxRetries;
-	const until = retry ? runtime.now() + retryDelayMs(policy, attempt) : 0;
+	const localAttempt = fallbackAttempt(checkpoint.fallback, attempt);
+	const retry = policy.enabled && localAttempt <= policy.maxRetries;
+	const until = retry ? runtime.now() + retryDelayMs(policy, localAttempt) : 0;
 	const polled = checkpoint.phase === "poll" ? checkpoint : undefined;
 	const text =
 		polled === undefined
@@ -639,7 +690,14 @@ async function interrupted(
 								handle: polled.handle,
 							},
 						};
-			const next = { phase: "retry", attempt, ...(compacted === undefined ? {} : { compacted }), until, ...poll };
+			const next = {
+				phase: "retry",
+				attempt,
+				...(compacted === undefined ? {} : { compacted }),
+				...(checkpoint.fallback === undefined ? {} : { fallback: checkpoint.fallback }),
+				until,
+				...poll,
+			};
 			return { status: "sleeping", checkpoint: next as GenerationCheckpoint, until };
 		}
 		await endFailedRun(tx, runtime, live, failure, { status: "unanswered", reason: "interrupted", detail: text });
@@ -872,6 +930,7 @@ async function classify(
 	runtime.signal.throwIfAborted();
 	const conversationId = runtime.conversationId;
 	const { attempt, compacted, model: ref, thinkingLevel, cutoff } = request;
+	const keptFallback = request.fallback === undefined ? {} : { fallback: request.fallback };
 	// Record the requested level, as pi-agent-core's agent loop does.
 	if (thinkingLevel !== undefined) message.thinkingLevel = thinkingLevel;
 	if (message.stopReason === "deferred" && message.deferred !== undefined) {
@@ -884,6 +943,7 @@ async function classify(
 			(await tx.doc(LiveDoc, conversationId)).generation = { attempt, deferred: { pollAt } };
 			const checkpoint = {
 				phase: "poll",
+				...keptFallback,
 				attempt,
 				...(compacted === undefined ? {} : { compacted }),
 				model: ref,
@@ -897,6 +957,27 @@ async function classify(
 		return;
 	}
 	await runtime.hooks.each("afterResponse", (hook) => hook(message, runtime, context));
+	if (fallbackRefusal(message, request.fallback)) {
+		const next = nextFallback(request.fallback, attempt);
+		const text = message.errorMessage ?? "The model refused to complete the request";
+		await runtime.commit(async (tx): Promise<Next> => {
+			const failure = next === undefined ? await prepareFailure(tx, runtime) : undefined;
+			const live = await tx.doc(LiveDoc, conversationId);
+			const entry = await appendAssistant(tx, conversationId, message);
+			await omitRefusal(tx, conversationId, entry.id, next);
+			delete live.generation;
+			if (next !== undefined) {
+				return { status: "running", checkpoint: { phase: "prepare", attempt: attempt + 1, fallback: next } };
+			}
+			// Exhaustion prepared the failure before appending either transcript entry.
+			await endFailedRun(tx, runtime, live, failure!, { status: "unanswered", reason: "model_error", detail: text });
+			return {
+				status: "terminal",
+				outcome: { status: "failed", error: { message: text, detail: { reason: "model_error" } } },
+			};
+		}, context);
+		return;
+	}
 	const calls = message.content.filter((content): content is ToolCall => content.type === "toolCall");
 	if (message.stopReason === "toolUse" && calls.length > 0) {
 		return startToolRound(runtime, request, message, calls, context);
@@ -920,21 +1001,28 @@ async function classify(
 				await appendAssistant(tx, conversationId, message);
 				delete live.generation;
 				const child = await createCompaction(tx, conversationId, { reason: "overflow" }, runtime.taskId);
-				const checkpoint = { phase: "prepare", attempt, compacted: child, overflow: text } as const;
+				const checkpoint = {
+					phase: "prepare",
+					attempt,
+					compacted: child,
+					overflow: text,
+					...keptFallback,
+				} as const;
 				return { status: "waiting", checkpoint, on: [child], policy: "allSettled" };
 			}, context);
 			return;
 		}
 	}
 	const policy = settings.retry;
+	const localAttempt = fallbackAttempt(request.fallback, attempt);
 	// An overflow is never retried: only a compaction can make the next request fit.
 	const retry =
 		message.stopReason === "error" &&
 		!overflow &&
 		isRetryableAssistantError(message) &&
 		policy.enabled &&
-		attempt <= policy.maxRetries;
-	const until = retry ? runtime.now() + retryDelayMs(policy, attempt) : 0;
+		localAttempt <= policy.maxRetries;
+	const until = retry ? runtime.now() + retryDelayMs(policy, localAttempt) : 0;
 	await runtime.commit(async (tx): Promise<Next> => {
 		// Read before the first table write; only a failure uses it.
 		const failure = retry ? undefined : await prepareFailure(tx, runtime);
@@ -944,6 +1032,7 @@ async function classify(
 			live.generation = { attempt, retry: { at: until, error: message.errorMessage ?? "" } };
 			const checkpoint = {
 				phase: "retry",
+				...keptFallback,
 				attempt,
 				...(compacted === undefined ? {} : { compacted }),
 				until,
@@ -1368,7 +1457,7 @@ async function appendAssistant(
 	conversationId: ConversationId,
 	message: AssistantMessage,
 ): Promise<TypedEntry<never>> {
-	await recordUsage(tx, conversationId, "models", `${message.provider}/${message.model}`, message.usage);
+	await recordModelUsage(tx, conversationId, message);
 	return tx.appendEntry(AssistantEntry, conversationId, { model: [message] });
 }
 
