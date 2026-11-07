@@ -88,8 +88,9 @@ const BUDGETS = {
 			// each conversation's newest entry and head marker (session/conversation-tails.ts). Group commit sends batches
 			// through `commit()`, or one `commit()` each (storage/commit-batch.ts), from a writer off the Session line
 			// (session/writer.ts) that gates reads by the keys of unpublished writes (session/keys.ts).
-			// +1 for the fork: utils/retry.ts imports utils/refusal.ts.
-			maxFiles: 124,
+			// Fork additions: refusal classification, checkpointed model fallback, declined-attempt accounting
+			// (pi-ai fallback, diagnostics, event streams), and the narrow native-tool guard plus pi-ai's types module.
+			maxFiles: 130,
 			forbid: [
 				"packages/ai/src/index.ts",
 				"packages/ai/src/utils/string-enum.ts",
