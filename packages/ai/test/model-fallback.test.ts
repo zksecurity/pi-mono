@@ -590,3 +590,52 @@ describe("streamWithModelFallbackEvents", () => {
 		expect(final.errorMessage).toMatch(/at least one model/);
 	});
 });
+
+describe.each(["complete", "events"] as const)("%s text refusal fallback", (mode) => {
+	it.each(["answer", "refusal", "aborted"] as const)(
+		"handles a final %s without changing its stop reason",
+		async (outcome) => {
+			const models = [createModel("anthropic", "primary"), createModel("anthropic", "fallback")];
+			const tried: string[] = [];
+			const finished: boolean[] = [];
+			const produce = (model: Model<Api>) => {
+				tried.push(model.id);
+				const message = createResponse(model, outcome === "aborted" ? "aborted" : "stop");
+				message.content = [
+					{
+						type: "text",
+						text:
+							model.id === "primary" || outcome === "refusal" ? "I can't help with that." : "The answer is 42.",
+					},
+				];
+				return message;
+			};
+			const options = {
+				models,
+				fallbackCallbacks: {
+					onFallbackFinished: (success: boolean) => {
+						finished.push(success);
+					},
+				},
+			};
+			const result =
+				mode === "complete"
+					? await streamWithModelFallback(async (model) => produce(model), options)
+					: await streamWithModelFallbackEvents((model) => {
+							const stream = new AssistantMessageEventStream();
+							const message = produce(model);
+							stream.push({ type: "start", partial: message });
+							stream.push(
+								message.stopReason === "aborted"
+									? { type: "error", reason: "aborted", error: message }
+									: { type: "done", reason: "stop", message },
+							);
+							return stream;
+						}, options).result();
+			expect(tried).toEqual(outcome === "aborted" ? ["primary"] : ["primary", "fallback"]);
+			expect(result.stopReason).toBe(outcome === "aborted" ? "aborted" : "stop");
+			expect(finished).toEqual([outcome === "answer"]);
+			expect(getDeclinedAttempts(result)).toHaveLength(outcome === "aborted" ? 0 : 1);
+		},
+	);
+});

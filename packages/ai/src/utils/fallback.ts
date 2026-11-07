@@ -108,7 +108,7 @@ export interface ModelFallbackOptions<TApi extends Api> {
 	/** Models to try in order. Usually built by {@link resolveDowngradeChain}. */
 	models: Model<TApi>[];
 	/**
-	 * Decides whether a failed response should move to the next model.
+	 * Decides whether an error or a classified refusal should move to the next model.
 	 *
 	 * Defaults to {@link isRefusal}: content-scoped refusals only. Account-scoped
 	 * restrictions are deliberately excluded — those fail identically on every
@@ -242,7 +242,7 @@ function declinedDiagnostic<TApi extends Api>(
 	return {
 		type: MODEL_FALLBACK_DIAGNOSTIC_TYPE,
 		timestamp: Date.now(),
-		error: { name: "ModelDeclined", message: response.errorMessage || "Unknown error" },
+		error: { name: "ModelDeclined", message: response.errorMessage || "The model refused to complete the request" },
 		details: {
 			attempt,
 			provider: model.provider,
@@ -277,6 +277,9 @@ function declinedDiagnostic<TApi extends Api>(
  *   adapter. For chain-wide spend, total it yourself:
  *   `sumUsage(result.usage, ...getDeclinedAttempts(result).map((a) => a.usage))`.
  *
+ * Text refusals can end with `stop`: they advance the chain without changing
+ * their original stop reason. An exhausted text-refusal chain returns its last
+ * message unchanged and reports unsuccessful through `onFallbackFinished`.
  * Aborts are terminal and never walk the chain. A failure that
  * `shouldFallback` rejects is returned immediately, so deterministic errors
  * still fail fast instead of being re-tried down every model in the list.
@@ -296,8 +299,13 @@ export async function streamWithModelFallback<TApi extends Api>(
 		const model = models[i];
 		const response = await retryAssistantCall(() => produce(model), retry, signal, retryCallbacks);
 
-		const isFailure = response.stopReason === "error";
-		const canFallback = isFailure && shouldFallback(response) && i < models.length - 1;
+		const refused = isRefusal(response);
+		const isFailure = response.stopReason === "error" || response.stopReason === "aborted" || refused;
+		const canFallback =
+			response.stopReason !== "aborted" &&
+			(response.stopReason === "error" || refused) &&
+			shouldFallback(response) &&
+			i < models.length - 1;
 
 		if (!canFallback) {
 			for (const diagnostic of diagnostics) appendAssistantMessageDiagnostic(response, diagnostic);
@@ -311,7 +319,7 @@ export async function streamWithModelFallback<TApi extends Api>(
 			model,
 			models[i + 1],
 			diagnostics.length,
-			response.errorMessage || "Unknown error",
+			response.errorMessage || "The model refused to complete the request",
 		);
 	}
 
@@ -400,12 +408,10 @@ function synthesizeFailure<TApi extends Api>(model: Model<TApi>, error: unknown)
  * every attempt, including ones later discarded. Each carries its own `partial`,
  * so a consumer that replaces state per event converges on the serving attempt.
  *
- * **Consequence worth knowing:** if an attempt emits output before being
- * refused, that output has already been forwarded and may have been logged or
- * displayed, even though it belongs to a discarded turn. In practice the
- * refusals this handles arrive before any output — Anthropic's classifier blocks
- * pre-generation, and a Codex block throws before the first event — but a
- * mid-stream refusal would leak text from a turn that never completed.
+ * Text refusals are classified only after their output has been forwarded, so
+ * a discarded refusal may already have been logged or displayed. Consumers
+ * that append deltas must handle this; consumers replacing state from each
+ * event's `partial` converge on the serving attempt.
  */
 export function streamWithModelFallbackEvents<TApi extends Api>(
 	produce: (model: Model<TApi>) => AssistantMessageEventStream | Promise<AssistantMessageEventStream>,
@@ -460,8 +466,13 @@ export function streamWithModelFallbackEvents<TApi extends Api>(
 			const model = models[i];
 			const response = await retryAssistantCall(() => runOnce(model), retry, signal, retryCallbacks);
 
-			const isFailure = response.stopReason === "error";
-			const canFallback = isFailure && shouldFallback(response) && i < models.length - 1;
+			const refused = isRefusal(response);
+			const isFailure = response.stopReason === "error" || response.stopReason === "aborted" || refused;
+			const canFallback =
+				response.stopReason !== "aborted" &&
+				(response.stopReason === "error" || refused) &&
+				shouldFallback(response) &&
+				i < models.length - 1;
 
 			if (!canFallback) {
 				for (const diagnostic of diagnostics) appendAssistantMessageDiagnostic(response, diagnostic);
@@ -477,7 +488,7 @@ export function streamWithModelFallbackEvents<TApi extends Api>(
 				model,
 				models[i + 1],
 				diagnostics.length,
-				response.errorMessage || "Unknown error",
+				response.errorMessage || "The model refused to complete the request",
 			);
 		}
 	})().catch((error) => {
