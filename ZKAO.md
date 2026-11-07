@@ -44,6 +44,32 @@ Let `OLD` = the upstream release `zkao` is currently synced to (the newest `vX.Y
    ```
 6. **Confirm**: `gh run watch <id> --repo zksecurity/pi-mono --exit-status` on the "zkao Release" run, then `gh release view vNEW.zkao --repo zksecurity/pi-mono` shows a non-draft release with a `.tgz` asset per published package.
 
+## Durable integration
+
+Use this fork's `pi-ai` together with `pi-durable` to retain the provider fixes, catalogs, native web search, and refusal classification. Durable's generation and summarization tasks support an explicit fallback list:
+
+```typescript
+const harness = await Harness.open(storage, {
+	models,
+	registry,
+	settings: { stream: { nativeTools: { webSearch: true } } },
+}, context);
+const root = await harness.root(context, {
+	agent: {
+		model: { provider: "anthropic", modelId: "claude-mythos-5-1" },
+		fallbackModels: [{ provider: "anthropic", modelId: "claude-opus-4-6" }],
+	},
+});
+```
+
+The host chooses the fallback models and order; Durable does not use the older hardcoded downgrade chains. Set `fallbackModels: null` with `configure()` to disable fallback. Each generation and summarization starts at the configured primary model, pins its chain, and advances only for content refusals, including recognized text declines. Account restrictions, quota errors, and cancellation do not advance it. Each model gets its own transient retry budget; attempt numbers increase across the chain so host recovery identities remain distinct. A missing configured model fails with `no_model`.
+
+Generation commits the declined assistant response, a `pi.model-fallback` entry excluding that response from subsequent model context, and the next checkpoint atomically. The original response and stop reason remain in history. Reopening resumes at the pinned model even if configuration has changed. Exhausted chains settle the run `unanswered` with `model_error`; a refused summary fails compaction instead of becoming the summary. Summarization records each attempt's usage without adding its response to the conversation transcript.
+
+Native search configuration is pinned with generation request options and omitted from summarization. Client tools cannot use the reserved `web_search` name while native search is enabled. Provider-owned search blocks remain in assistant messages across reopen and fork; they do not create client tool tasks. Conversation and harness usage totals include search counters, search cost breakdowns, and declined-attempt diagnostics supplied by host model wrappers.
+
+The first release with this integration is `v1.5.0-4.zkao`. Package versions remain `1.5.0`; install the fork's release tarballs together so Durable does not resolve upstream `pi-ai` by accident. The release also includes the previously committed `HarnessOptions.modelRequests` lifecycle: `recover(identity, context)` can return a host-persisted response before redispatch, and `execute(request, run, context)` surrounds generation, deferred polling, and summarization. Hosts own receipt persistence; request attempt numbers remain distinct across model fallbacks. Generation and compaction task definitions are now versions 3 and 2, respectively: older runtimes cannot execute these live tasks.
+
 ## Backup branches
 
 | Backup branch | Synced version | Date | Notes |
@@ -83,3 +109,4 @@ Let `OLD` = the upstream release `zkao` is currently synced to (the newest `vX.Y
 | `zkao-v1.5.0-backup` | v1.5.0 | 2026-11-03 | Snapshot including literal text-refusal phrases, exported display rules and matched-phrase details, and 68 recorded DeepInfra responses across eight models before autosquashing for `v1.5.0-2.zkao`. All 2,143 isolated pi-ai tests, the build and required checks pass; unrelated Chord macOS plugin, socket and worker failures persist from the upstream v1.5.0 baseline. |
 | `zkao-v1.5.0-prereorder-backup` | v1.5.0 follow-up | 2026-11-03 | Snapshot before folding the requested response-length cap removal into the refusal feature. All 193 final refusal tests and the rebuilt package smoke test pass: 51 explicit refusals detected, 16 benign responses excluded, and one indirect redirection unclassified across the 68 fixtures. The feature tree is unchanged by autosquashing. |
 | `zkao-v1.5.0-2-backup` | v1.5.0-2.zkao | 2026-11-03 | Snapshot before autosquashing the 14 observed refusal phrases and nine Grok 4.7 fixtures for `v1.5.0-3.zkao`. All 2,197 isolated pi-ai tests, the build and required checks pass. The packed library passes all 77 recorded responses: 58 explicit refusals, 18 benign replies and one indirect redirection. Six unrelated Chord plugin, socket and worker tests fail on macOS; Chord is unchanged from upstream v1.5.0. The feature tree is unchanged by autosquashing. |
+| `zkao-v1.5.0-3-backup` | v1.5.0-3.zkao follow-up | 2026-11-07 | Snapshot before tagging `v1.5.0-4.zkao`, preserving the existing host model request lifecycle and the new Durable fallback, native search, usage accounting, and shared text-refusal fallback fix. Build, required checks, 341 targeted Durable tests, and 307 affected pi-ai tests pass. An external consumer installed the packed fork libraries and verified fallback, SQLite reopen, search-block replay, usage extras, and narrow exports. Published history is preserved; the follow-up is pushed as a fast-forward. |
