@@ -1,5 +1,6 @@
 import { copyJson, type Draft, type JsonRepresentation } from "@earendil-works/chord";
-import type { Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
+import { getDeclinedAttempts } from "@earendil-works/pi-ai/utils/fallback";
 import { defineDoc } from "../documents.ts";
 import type { ConversationId, Tx } from "../types.ts";
 
@@ -20,6 +21,18 @@ export const UsageDoc = defineDoc<UsageState>({
 	initial: () => ({ models: {}, tools: {} }),
 	checkpointWhen: () => true,
 });
+
+/** Record the serving model and any declined attempts carried by a host's model wrapper. */
+export async function recordModelUsage(
+	tx: Tx,
+	conversationId: ConversationId,
+	message: AssistantMessage,
+): Promise<void> {
+	await recordUsage(tx, conversationId, "models", `${message.provider}/${message.model}`, message.usage);
+	for (const attempt of getDeclinedAttempts(message)) {
+		await recordUsage(tx, conversationId, "models", `${attempt.provider}/${attempt.model}`, attempt.usage);
+	}
+}
 
 /** Add `usage` to one bucket of the conversation's `pi.usage`, in the commit that records the response. */
 export async function recordUsage(
@@ -47,11 +60,27 @@ export function addUsage(total: Draft<Usage> | Usage, usage: Usage): void {
 	total.totalTokens += usage.totalTokens;
 	if (usage.cacheWrite1h !== undefined) total.cacheWrite1h = (total.cacheWrite1h ?? 0) + usage.cacheWrite1h;
 	if (usage.reasoning !== undefined) total.reasoning = (total.reasoning ?? 0) + usage.reasoning;
+	if (usage.extras !== undefined) total.extras = addExtras(total.extras, usage.extras);
 	total.cost.input += usage.cost.input;
 	total.cost.output += usage.cost.output;
 	total.cost.cacheRead += usage.cost.cacheRead;
 	total.cost.cacheWrite += usage.cost.cacheWrite;
 	total.cost.total += usage.cost.total;
+	if (usage.cost.extras !== undefined) total.cost.extras = addExtras(total.cost.extras, usage.cost.extras);
+}
+
+/** Sum named counters, including keys that also exist on Object.prototype. */
+function addExtras(total: Record<string, number> | undefined, extras: Record<string, number>): Record<string, number> {
+	const sum = { ...total };
+	for (const [key, value] of Object.entries(extras)) {
+		Object.defineProperty(sum, key, {
+			value: (Object.hasOwn(sum, key) ? sum[key]! : 0) + value,
+			enumerable: true,
+			configurable: true,
+			writable: true,
+		});
+	}
+	return sum;
 }
 
 /** Add every bucket of `state` into `sum`. */

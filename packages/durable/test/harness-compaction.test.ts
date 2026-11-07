@@ -2348,7 +2348,9 @@ describe("blocked compaction", () => {
 		const setup = chatSetup();
 		let { harness, root } = await openChat(await openNodeSqliteStorage(path), setup);
 		// A compaction stored by a newer version than this process registers, for example after a downgrade.
-		const newer = { definition: { ...CompactionTask.definition, version: 2 } } as typeof CompactionTask;
+		const newer = {
+			definition: { ...CompactionTask.definition, version: CompactionTask.definition.version + 1 },
+		} as typeof CompactionTask;
 		const id = await root.commit(async (tx) => {
 			const taskId = await tx.createTask(newer, { reason: "manual" }, { ownership: { kind: "conversation" } });
 			const live = await tx.doc(LiveDoc, root.id);
