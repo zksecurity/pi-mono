@@ -1,7 +1,8 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { getModel } from "../src/compat.ts";
+import { cleanupSessionResources } from "../src/session-resources.ts";
 import type { AssistantMessage, Context, ServerToolUse } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
@@ -185,6 +186,34 @@ async function capturePayloadFor(assistant: AssistantMessage): Promise<{ role: s
 }
 
 describe("Anthropic server-side tool blocks", () => {
+	afterEach(() => cleanupSessionResources());
+
+	it("continues a message thread after a native web search reply", async () => {
+		const requests: Array<{ thread?: unknown; messages: Array<{ role: string }> }> = [];
+		const fetchImpl: typeof fetch = async (input, init) => {
+			const request = new Request(input, init);
+			requests.push(JSON.parse(await request.text()));
+			return createSseResponse(searchTurnEvents);
+		};
+		const context: Context = {
+			messages: [{ role: "user", content: "search the web", timestamp: 0 }],
+		};
+		const options = {
+			apiKey: "fake-key",
+			nativeTools: { webSearch: true },
+			sessionId: "native-search-thread",
+			fetch: fetchImpl,
+		};
+		const first = await streamAnthropic(model, normalizeContext(context), options).result();
+		expect(first.stopReason).toBe("stop");
+		context.messages.push(first, { role: "user", content: "now summarize", timestamp: 1 });
+		const second = await streamAnthropic(model, normalizeContext(context), options).result();
+		expect(second.stopReason).toBe("stop");
+		expect(requests[0].thread).toEqual({ type: "create" });
+		expect(requests[1].thread).toEqual({ type: "continue", previous_message_id: "msg_search" });
+		expect(requests[1].messages.map((message) => message.role)).toEqual(["user"]);
+	});
+
 	it("captures the server_tool_use / web_search_tool_result pair in message content", async () => {
 		const result = await captureSearchTurn();
 

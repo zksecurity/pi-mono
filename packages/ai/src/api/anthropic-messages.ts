@@ -474,11 +474,18 @@ function recordThreadReply(
 	if (output.responseId === undefined || output.responseModel !== undefined) return;
 	// Convert the reply like the next request will, keeping only the assistant message
 	// (transformMessages adds placeholder results for trailing tool calls).
+	// Search blocks must participate in the prefix hash just as they do on the next request.
+	const enabledServerToolNames = new Set(
+		params.tools?.flatMap((tool) => (tool.type === "web_search_20250305" ? [tool.name] : [])),
+	);
 	const reply = convertMessages(
 		transformMessages([output], model, normalizeToolCallId),
 		isOAuth,
 		undefined,
 		allowEmptySignature,
+		undefined,
+		undefined,
+		enabledServerToolNames,
 	).messages.filter((message) => message.role === "assistant");
 	const prefix = [...params.messages, ...reply];
 	setThreadState(thread.sessionId, {
