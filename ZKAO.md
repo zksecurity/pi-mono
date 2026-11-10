@@ -38,7 +38,7 @@ Let `OLD` = the upstream release `zkao` is currently synced to (the newest `vX.Y
 
 1. **Backup** (see [Backups](#backups)): from a clean tree, `git branch zkao-vOLD-backup zkao && git push origin zkao-vOLD-backup`.
 2. **Rebase** our commits onto the new release: `git fetch upstream --tags` then `git rebase --onto vNEW vOLD zkao`. Resolve conflicts only in files we modified; **drop** any of our commits upstream has since absorbed. Fold any follow-up fixes into their feature commits (see [Commit layout](#commit-layout)).
-3. **Verify**: `npm install --ignore-scripts && npm run build && npm run check`, then run the AI tests (`cd packages/ai && npx vitest run`). The build regenerates `*.generated.ts` from live APIs and `npm install` may touch `package-lock.json`; `git checkout -- <those>` before tagging so the tag matches the upstream `vNEW` tree.
+3. **Verify**: `npm install --ignore-scripts && npm run build && npm run check`, then `./test.sh` for the credential-isolated suites and `npm run check:package-install` for packed consumers outside the checkout. Use specific test files for targeted reruns; never run the full Vitest suite directly with the host's credentials. Review generated catalog and lockfile changes: retain required fork changes and discard only incidental install drift introduced by this release session. Never stage the ignored provider data.
 4. **Record the backup**: add a `zkao-vOLD-backup` row to the table below (synced version, today's date, what the rebase dropped/re-resolved) and amend the last commit (`git commit --amend --no-edit -- ZKAO.md`).
 5. **Tag and push** (lightweight tag, matching prior `.zkao` tags):
    ```bash
@@ -62,7 +62,7 @@ const harness = await Harness.open(storage, {
 }, context);
 const root = await harness.root(context, {
 	agent: {
-		model: { provider: "anthropic", modelId: "claude-mythos-5-1" },
+		model: { provider: "anthropic", modelId: "claude-mythos-5-2" },
 		fallbackModels: [{ provider: "anthropic", modelId: "claude-opus-4-6" }],
 	},
 });
@@ -116,3 +116,5 @@ The first release with this integration is `v1.5.0-4.zkao`. Package versions rem
 | `zkao-v1.5.0-prereorder-backup` | v1.5.0 follow-up | 2026-11-03 | Snapshot before folding the requested response-length cap removal into the refusal feature. All 193 final refusal tests and the rebuilt package smoke test pass: 51 explicit refusals detected, 16 benign responses excluded, and one indirect redirection unclassified across the 68 fixtures. The feature tree is unchanged by autosquashing. |
 | `zkao-v1.5.0-2-backup` | v1.5.0-2.zkao | 2026-11-03 | Snapshot before autosquashing the 14 observed refusal phrases and nine Grok 4.7 fixtures for `v1.5.0-3.zkao`. All 2,197 isolated pi-ai tests, the build and required checks pass. The packed library passes all 77 recorded responses: 58 explicit refusals, 18 benign replies and one indirect redirection. Six unrelated Chord plugin, socket and worker tests fail on macOS; Chord is unchanged from upstream v1.5.0. The feature tree is unchanged by autosquashing. |
 | `zkao-v1.5.0-3-backup` | v1.5.0-3.zkao follow-up | 2026-11-07 | Snapshot before tagging `v1.5.0-4.zkao`, preserving the existing host model request lifecycle and the new Durable fallback, native search, usage accounting, and shared text-refusal fallback fix. Build, required checks, 341 targeted Durable tests, and 307 affected pi-ai tests pass. An external consumer installed the packed fork libraries and verified fallback, SQLite reopen, search-block replay, usage extras, and narrow exports. Published history is preserved; the follow-up is pushed as a fast-forward. |
+| `zkao-v1.5.0-4-backup` | v1.5.0-4.zkao | 2026-11-10 | Snapshot before rebasing onto v1.5.2, including Mythos 5.2, the previously requested prototype-safe usage aggregation fix, and fork-release authority rules. Preserved the proxy option relay, Mythos catalog, and Durable fallback alongside upstream's Chord import split. Dropped the Fireworks test backport absorbed upstream. Adapted native search to Anthropic message-thread prefix recording and updated the OAuth regression's client version. |
+| `zkao-v1.5.0-4-prereorder-backup` | v1.5.2 preparation | 2026-11-10 | Snapshot before folding the rebase adaptations into their feature commits. Build, required checks, all 2,324 isolated AI tests, and all 11 packed-package consumer checks pass. The broader suites report three failures in Chord's plugin and macOS socket-lock tests; Chord is unchanged from upstream v1.5.2. |
