@@ -215,7 +215,11 @@ export function sumUsage(...usages: Usage[]): Usage {
 		if (usage.cacheWrite1h !== undefined) total.cacheWrite1h = (total.cacheWrite1h ?? 0) + usage.cacheWrite1h;
 		if (usage.reasoning !== undefined) total.reasoning = (total.reasoning ?? 0) + usage.reasoning;
 		for (const [key, value] of Object.entries(usage.extras ?? {})) {
-			total.extras = { ...total.extras, [key]: (total.extras?.[key] ?? 0) + value };
+			// Counter names may also exist on Object.prototype, such as `toString`.
+			total.extras = {
+				...total.extras,
+				[key]: (total.extras && Object.hasOwn(total.extras, key) ? total.extras[key] : 0) + value,
+			};
 		}
 
 		total.cost.input += usage.cost.input;
@@ -224,7 +228,10 @@ export function sumUsage(...usages: Usage[]): Usage {
 		total.cost.cacheWrite += usage.cost.cacheWrite;
 		total.cost.total += usage.cost.total;
 		for (const [key, value] of Object.entries(usage.cost.extras ?? {})) {
-			total.cost.extras = { ...total.cost.extras, [key]: (total.cost.extras?.[key] ?? 0) + value };
+			total.cost.extras = {
+				...total.cost.extras,
+				[key]: (total.cost.extras && Object.hasOwn(total.cost.extras, key) ? total.cost.extras[key] : 0) + value,
+			};
 		}
 	}
 

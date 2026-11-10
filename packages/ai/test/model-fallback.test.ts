@@ -163,6 +163,19 @@ describe("sumUsage", () => {
 		expect(total.reasoning).toBe(7);
 	});
 
+	it.each(["toString", "constructor", "hasOwnProperty", "__proto__"])(
+		"sums usage and cost extras named %s without reading inherited properties",
+		(key) => {
+			const attempts = [usage(10, 0, { webSearch: 1 }), usage(10, 0, { [key]: 2 }), usage(10, 0, { [key]: 3 })];
+			for (const attempt of attempts) attempt.cost.extras = { ...attempt.extras };
+
+			const total = sumUsage(...attempts);
+
+			expect(total.extras).toStrictEqual({ webSearch: 1, [key]: 5 });
+			expect(total.cost.extras).toStrictEqual({ webSearch: 1, [key]: 5 });
+		},
+	);
+
 	it("returns a zeroed usage for no inputs", () => {
 		expect(sumUsage().totalTokens).toBe(0);
 	});
