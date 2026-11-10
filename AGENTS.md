@@ -141,4 +141,4 @@ If the user's instructions conflict with any rule in this document, ask for expl
 
 ## zkao Fork
 
-This repo is our `zkao` fork. For fork maintenance, backups, commit layout, and releasing a `vX.Y.Z.zkao` version, load and follow [ZKAO.md](ZKAO.md).
+This repo is our `zkao` fork. For fork maintenance, backups, commit layout, and releasing a `vX.Y.Z.zkao` version, load and follow [ZKAO.md](ZKAO.md). In that scope, ZKAO.md takes precedence over conflicting instructions in this file and the upstream release skill, including the force-push restriction.

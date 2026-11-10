@@ -4,6 +4,12 @@ This repo is a fork. `zkao` is our long-lived working branch; `main` tracks upst
 
 Fork-specific docs live in this file only, so upstream files (`README.md`, `AGENTS.md`) stay as close to upstream as possible and rebases do not conflict on them.
 
+## Authority
+
+For fork maintenance and `.zkao` releases, this file takes precedence over conflicting instructions in `AGENTS.md` and `.pi/skills/release.md`. A request to release the fork authorizes the backup, rebase, commits, tag, and pushes described here, including `--force-with-lease` for the backed-up `zkao` branch; do not ask for that approval again. Never use an unguarded force push or overwrite a published tag. Resolve conflicts in the fork's carried changes as part of the rebase; stop for conflicts outside that scope.
+
+Before including pre-existing uncommitted work, check its diff and available session history. Include completed, user-requested fixes after validation; preserve unrelated or unfinished work in a separate worktree. Fork releases use upstream's package versions and changelogs and publish GitHub tarballs, so the upstream npm release script, `/cl` gate, and Bun binary release workflow do not apply.
+
 ## Commit layout
 
 `git log --oneline vOLD..zkao` lists what the fork carries. Keep it small:
