@@ -102,9 +102,9 @@ const BUDGETS = {
 		// and pi-schema's root for their schema builders (10 files; its format checks stay out).
 		"./tools": { maxFiles: 27, forbid: ["packages/durable/src/images/", "packages/schema/src/formats/"] },
 		// The fit-images extension hooks the Harness's tool task, so it reaches most of the root's graph (what a Harness
-		// user loads anyway); Photon stays behind `./images`.
+		// user loads anyway); Photon stays behind `./images`. Fork: +7 for the root's fork additions.
 		"./images/fit": {
-			maxFiles: 100,
+			maxFiles: 107,
 			forbid: ["packages/durable/src/images/index.ts", "packages/durable/src/images/node.ts"],
 		},
 	},
