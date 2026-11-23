@@ -6,6 +6,7 @@ import antLing from "./ant-ling.ts";
 import anthropic from "./anthropic.ts";
 import azure from "./azure.ts";
 import baseten from "./baseten.ts";
+import boundless from "./boundless.ts";
 import cerebras from "./cerebras.ts";
 import cloudflareAiGateway from "./cloudflare-ai-gateway.ts";
 import cloudflareWorkersAi from "./cloudflare-workers-ai.ts";
@@ -52,6 +53,7 @@ export const PROVIDERS: readonly ProviderDefinition[] = [
 	anthropic,
 	azure,
 	baseten,
+	boundless,
 	cerebras,
 	cloudflareAiGateway,
 	cloudflareWorkersAi,

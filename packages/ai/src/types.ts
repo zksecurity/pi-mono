@@ -117,6 +117,7 @@ export type KnownProvider =
 	| "fireworks"
 	| "together"
 	| "baseten"
+	| "boundless"
 	| "deepinfra"
 	| "opencode"
 	| "opencode-go"

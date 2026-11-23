@@ -809,6 +809,34 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.BOUNDLESS_API_KEY)(
+		"Boundless Provider (DeepSeek V4.1 Flash 1017 via OpenAI Completions)",
+		() => {
+			const llm = getModel("boundless", "deepseek/deepseek-v4.1-flash-1017");
+			const options = { reasoningEffort: "high" } satisfies StreamOptionsWithExtras;
+
+			it("should complete basic text generation", { retry: 3 }, async () => {
+				await basicTextGeneration(llm, options);
+			});
+
+			it("should handle tool calling", { retry: 3 }, async () => {
+				await handleToolCall(llm, options);
+			});
+
+			it("should handle streaming", { retry: 3 }, async () => {
+				await handleStreaming(llm, options);
+			});
+
+			it("should handle thinking mode", { retry: 3 }, async () => {
+				await handleThinking(llm, options);
+			});
+
+			it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+				await multiTurn(llm, options);
+			});
+		},
+	);
+
 	describe.skipIf(!process.env.NVIDIA_API_KEY)("NVIDIA NIM Provider (Nemotron 3.5 Super VL)", () => {
 		const llm = getModel("nvidia", "nvidia/nemotron-3.5-super-vl-120b-a12b");
 
