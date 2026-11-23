@@ -52,6 +52,7 @@ This table covers providers with a single primary API-key variable. Providers th
 | Fireworks | `FIREWORKS_API_KEY` |
 | Together AI | `TOGETHER_API_KEY` |
 | Baseten | `BASETEN_API_KEY` |
+| Boundless | `BOUNDLESS_API_KEY` |
 | Kimi For Coding | `KIMI_API_KEY` |
 | Meta | `META_API_KEY` |
 | MiniMax | `MINIMAX_API_KEY` |

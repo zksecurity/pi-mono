@@ -37,7 +37,7 @@ const QWEN_FORMAT_PROVIDERS = new Set([
 	"qwen-token-plan-individual-cn",
 ]);
 // These hosts accept native reasoning efforts instead of DeepSeek's thinking toggle.
-const NATIVE_EFFORT_PROVIDERS = new Set(["openrouter", "opencode"]);
+const NATIVE_EFFORT_PROVIDERS = new Set(["openrouter", "opencode", "boundless"]);
 
 function isDeepSeekV4(model: ChatModel): model is Model<"openai-completions"> {
 	return model.api === "openai-completions" && model.id.includes("deepseek-v4");

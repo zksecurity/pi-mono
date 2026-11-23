@@ -46,6 +46,7 @@ export const defaultModelPerProvider: Partial<Record<KnownProvider, string>> = {
 	fireworks: "accounts/fireworks/models/kimi-k3",
 	together: "moonshotai/Kimi-K3",
 	baseten: "zai-org/GLM-5.3",
+	boundless: "moonshotai/kimi-k3.1-pro",
 	opencode: "kimi-k2.7-code",
 	"opencode-go": "kimi-k3.1-pro",
 	"kimi-coding": "kimi-for-coding",
